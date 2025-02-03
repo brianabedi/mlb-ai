@@ -1,17 +1,87 @@
 import Image from "next/image";
-
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 export default function Home() {
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center
+     min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+          <header className="row-start-1 w-full flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Image
+            src="/mlbai.png"
+            alt="Logo"
+            width={34}
+            height={24}
+            // className="dark:invert"
+          />
+          <span className="font-semibold">MLB AI</span>
+        </div>
+        {/* <nav className="hidden sm:flex items-center gap-4">
+          <a href="#" className="hover:text-gray-600 dark:hover:text-gray-300">Home</a>
+          <a href="#" className="hover:text-gray-600 dark:hover:text-gray-300">About</a>
+          <a href="#" className="hover:text-gray-600 dark:hover:text-gray-300">Contact</a>
+        </nav> */}
+      <Popover>
+      <PopoverTrigger asChild>
+        <Button variant="outline">
         <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
+              className="dark:invert"
+              src="/login.png"
+              alt="loginsignupimage"
+              width={24}
+              height={24}
+            />
+          {/* Login / Signup */}
+          </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 mr-20">
+        <div className="grid gap-4">
+          <div className="space-y-2">
+            {/* <h4 className="font-medium leading-none">Dimensions</h4> */}
+            {/* <p className="text-sm text-muted-foreground text-blue-600  ">
+              Sign Up
+            </p> */}
+          </div>
+          <div className="grid gap-2">
+            <div className="grid grid-cols-3 items-center gap-4">
+              <Label htmlFor="width">Email</Label>
+              <Input
+                id="width"
+                placeholder="name@gmail.com"
+
+
+                className="col-span-2 h-8"
+              />
+            </div>
+            <div className="grid grid-cols-3 items-center gap-4">
+              <Label htmlFor="maxWidth">Password</Label>
+              <Input
+                id="maxWidth"
+                placeholder="*****"
+                className="col-span-2 h-8"
+              />
+            </div>
+        
+
+           
+          </div>
+              <Button variant="outline"
+            className="bg-black text-white font-bold width-10 width-100">
+              Login | Signup 
+              </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+
+      </header>
+      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
+      
         <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
           <li className="mb-2">
             Get started by editing{" "}
