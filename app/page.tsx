@@ -8,6 +8,7 @@ import Image from "next/image";
 // import { Input } from "@/components/ui/input"
 // import { Label } from "@/components/ui/label"
 import AuthPopover from "@/components/AuthPopover";
+import MainData from "@/components/MainData";
 
 export default function Home() {
   return (
@@ -32,8 +33,8 @@ export default function Home() {
    
    <AuthPopover />
       </header>
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
- 
+      <main className="  ">
+ <MainData></MainData>
 
  
       </main>
