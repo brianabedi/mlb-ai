@@ -26,6 +26,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@types/google-one-tap": "^1.2.6",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
