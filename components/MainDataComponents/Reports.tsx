@@ -19,7 +19,7 @@ import {
   } from "@/components/ui/carousel"
 export default function Reports() {
   return (
-    <Card className="w-full row-span-2">
+    <Card className="w-full sm:row-span-2">
       <CardHeader>
         <CardTitle>Reports</CardTitle>
         <CardDescription></CardDescription>

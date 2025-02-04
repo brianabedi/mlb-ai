@@ -19,7 +19,7 @@ import {
   } from "@/components/ui/carousel"
 export default function GamePredictions() {
   return (
-    <Card  className="w-full col-span-2">
+    <Card  className="w-full sm:col-span-2">
       <CardHeader>
         <CardTitle>Game Predictions</CardTitle>
         <CardDescription></CardDescription>
