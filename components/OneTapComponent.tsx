@@ -39,7 +39,7 @@ const OneTapComponent = () => {
       }
 
       if (window.google?.accounts?.id) {
-        google.accounts.id.initialize({
+        window.google.accounts.id.initialize({
           client_id: process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID!,
           callback: async (response: CredentialResponse) => {
             try {
@@ -59,7 +59,7 @@ const OneTapComponent = () => {
           nonce: hashedNonce,
           use_fedcm_for_prompt: true,
         })
-        google.accounts.id.prompt()
+        window.google.accounts.id.prompt()
       } else {
         console.error('Google API is not available')
       }
