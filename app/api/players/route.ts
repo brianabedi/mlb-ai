@@ -1,186 +1,122 @@
+// app/api/players/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 
-// Define proper interfaces
-interface MLBPlayer {
-  id: number
-  nameFirstLast: string
-  currentTeam: {
-    name: string
-  }
-}
+const BATCH_SIZE = 10
+const MAX_RETRIES = 2
+const RETRY_DELAY = 500 // ms
+const CONCURRENT_REQUESTS = 3
 
-interface PlayerStats {
-  stats?: Array<{
-    splits?: Array<{
-      stat?: {
-        homeRuns?: number
-        avg?: number
-      }
-    }>
-  }>
-}
-
-interface FanData {
-  followed_player_ids: number[]
-}
-
-interface ProcessedPlayer {
-  id: number
-  nameFirstLast: string
-  currentTeam: {
-    name: string
-  }
-  stats: {
-    homeRuns: number
-    battingAverage: number
-  }
-  followers: number
-}
-
-async function processEndpointUrl(url: string, options: RequestInit = {}) {
-  const defaultOptions: RequestInit = {
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
-    ...options
-  }
-
-  const response = await fetch(url, defaultOptions)
-  
-  // Check if the response is ok before parsing
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status} for URL: ${url}`)
-  }
-
-  // Check the content type header
-  const contentType = response.headers.get('content-type')
-  if (!contentType?.includes('application/json')) {
-    console.error(`Unexpected content type: ${contentType} from ${url}`)
-    // Try to parse anyway, some APIs return JSON with incorrect content type
-    try {
-      const text = await response.text()
-      return JSON.parse(text)
-    } catch (error) {
-      throw new Error(`Expected JSON response but got ${contentType} from ${url}`)
-    }
-  }
-
+async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = 0): Promise<Response> {
   try {
-    const data = await response.json()
-    return data
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    })
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    return response
   } catch (error) {
-    console.error(`Error parsing JSON from ${url}:`, error)
-    throw new Error(`Failed to parse JSON response from ${url}`)
+    if (retryCount >= MAX_RETRIES) {
+      throw error
+    }
+    
+    await new Promise(resolve => setTimeout(resolve, RETRY_DELAY))
+    return fetchWithRetry(url, options, retryCount + 1)
   }
 }
 
-const CACHE_DURATION = 5 * 60 * 1000 // 5 minutes in milliseconds
-const cache = new Map<string, { data: any; timestamp: number }>()
-
-const rateLimiter = {
-  tokens: 25,
-  lastRefill: Date.now(),
-  interval: 1000,
-
-  async take() {
-    const now = Date.now()
-    if (now - this.lastRefill >= this.interval) {
-      this.tokens = 25
-      this.lastRefill = now
-    }
-
-    if (this.tokens > 0) {
-      this.tokens--
-      return true
-    }
-    return false
-  }
-}
-
-async function parseNewlineDelimitedJSON(response: Response): Promise<any[]> {
-  const text = await response.text()
-  const lines = text.trim().split('\n')
-  const results = []
-  
-  for (const line of lines) {
-    try {
-      if (line.trim()) {
-        results.push(JSON.parse(line))
-      }
-    } catch (error) {
-      console.error('Error parsing JSON line:', line, error)
-    }
-  }
-  
-  return results
-}
-
-async function processEndpointUrlWithRetry<T>(url: string, options: RequestInit = {}, isNDJSON = false, retries = 3): Promise<T> {
-  let lastError: Error | null = null
-  
-  for (let i = 0; i < retries; i++) {
-    if (!await rateLimiter.take()) {
-      await new Promise(resolve => setTimeout(resolve, 1000))
-      continue
-    }
-
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: AbortSignal.timeout(5000)
-      })
-      
-      if (response.status === 429) {
-        console.log('Rate limit hit, waiting...')
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        continue
-      }
-      
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status} for URL: ${url}`)
-      }
-      
-      return isNDJSON ? await parseNewlineDelimitedJSON(response) : await response.json()
-    } catch (error) {
-      console.error(`Error fetching ${url}:`, error)
-      lastError = error instanceof Error ? error : new Error(String(error))
-      if (i === retries - 1) break
-      await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, i)))
-    }
-  }
-  throw lastError || new Error('All retries failed')
-}
-
-async function fetchPlayerStatsForBatch(playerIds: number[]): Promise<Map<number, ProcessedPlayer['stats']>> {
-  const statsMap = new Map<number, ProcessedPlayer['stats']>()
-  
-  const statsPromises = playerIds.map(async (playerId) => {
-    try {
-      const statsData = await processEndpointUrlWithRetry<PlayerStats>(
-        `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=season&season=2024&group=hitting&sportId=1`
+async function fetchPlayerStats(playerId: number) {
+  try {
+    const [battingResponse, pitchingResponse] = await Promise.all([
+      fetchWithRetry(
+        `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=season&season=2024&group=hitting`
+      ),
+      fetchWithRetry(
+        `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=season&season=2024&group=pitching`
       )
-      
-      statsMap.set(playerId, {
-        homeRuns: statsData.stats?.[0]?.splits?.[0]?.stat?.homeRuns ?? 0,
-        battingAverage: statsData.stats?.[0]?.splits?.[0]?.stat?.avg ?? 0
-      })
-    } catch (error) {
-      console.error(`Error fetching stats for player ${playerId}:`, error)
-      statsMap.set(playerId, { homeRuns: 0, battingAverage: 0 })
-    }
-  })
-  
-  // Process in batches of 5 to respect rate limits
-  for (let i = 0; i < statsPromises.length; i += 5) {
-    const batch = statsPromises.slice(i, i + 5)
-    await Promise.all(batch)
-    if (i + 5 < statsPromises.length) {
-      await new Promise(resolve => setTimeout(resolve, 200))
-    }
+    ])
+
+    const [battingStatsData, pitchingStatsData] = await Promise.all([
+      battingResponse.json(),
+      pitchingResponse.json()
+    ])
+
+    return { battingStatsData, pitchingStatsData }
+  } catch (error) {
+    console.error(`Error fetching stats for player ${playerId}:`, error)
+    return { battingStatsData: null, pitchingStatsData: null }
   }
-  
-  return statsMap
+}
+
+async function processBatch(players: any[]) {
+  return Promise.all(
+    players.map(async (player) => {
+      try {
+        const { battingStatsData, pitchingStatsData } = await fetchPlayerStats(player.id)
+        
+        const battingStats = battingStatsData?.stats?.[0]?.splits?.[0]?.stat
+        const pitchingStats = pitchingStatsData?.stats?.[0]?.splits?.[0]?.stat
+        
+        return {
+          id: player.id,
+          nameFirstLast: player.nameFirstLast,
+          currentTeam: player.currentTeam,
+          battingStats: battingStats ? {
+            homeRuns: battingStats.homeRuns,
+            battingAverage: battingStats.avg,
+            onBasePercentage: battingStats.obp,
+            slugging: battingStats.slg,
+            hits: battingStats.hits,
+            runsBattedIn: battingStats.rbi,
+            stolenBases: battingStats.stolenBases,
+            strikeouts: battingStats.strikeouts
+          } : undefined,
+          pitchingStats: pitchingStats ? {
+            earnedRunAverage: pitchingStats.era,
+            strikeouts: pitchingStats.strikeouts,
+            wins: pitchingStats.wins,
+            losses: pitchingStats.losses,
+            saves: pitchingStats.saves,
+            inningsPitched: pitchingStats.inningsPitched,
+            whip: pitchingStats.whip,
+            strikeoutsPer9Inn: pitchingStats.strikeoutsPer9Inn
+          } : undefined,
+          followers: 0
+        }
+      } catch (error) {
+        console.error(`Error processing player ${player.id}:`, error)
+        return {
+          id: player.id,
+          nameFirstLast: player.nameFirstLast,
+          currentTeam: player.currentTeam,
+          followers: 0
+        }
+      }
+    })
+  )
+}
+
+async function processAllPlayers(players: any[]) {
+  const batches = []
+  for (let i = 0; i < players.length; i += BATCH_SIZE) {
+    batches.push(players.slice(i, i + BATCH_SIZE))
+  }
+
+  const results = []
+  for (let i = 0; i < batches.length; i += CONCURRENT_REQUESTS) {
+    const currentBatches = batches.slice(i, i + CONCURRENT_REQUESTS)
+    const batchResults = await Promise.all(currentBatches.map(processBatch))
+    results.push(...batchResults.flat())
+  }
+
+  return results
 }
 
 export const revalidate = 300
@@ -190,9 +126,11 @@ export async function GET() {
     // Get base player data
     let playersData
     try {
-      playersData = await processEndpointUrl(
+      const response = await fetchWithRetry(
         'https://statsapi.mlb.com/api/v1/sports/1/players?season=2024'
       )
+      playersData = await response.json()
+      
       if (!playersData?.people) {
         throw new Error('Invalid player data format received')
       }
@@ -202,86 +140,47 @@ export async function GET() {
     }
 
     // Get fan interaction data
-    // Get fan interaction data
-let fanData
-try {
-    fanData = await processEndpointUrl(
-      'https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/2025-mlb-fan-favs-follows.json'
-    )
-  } catch (error) {
-    console.error('Error fetching fan data:', error)
-    console.error('Error details:', {
-      message: error.message,
-      stack: error.stack,
-      cause: error.cause
-    })
-    return NextResponse.json({ 
-      error: 'Failed to fetch fan interaction data',
-      details: error.message 
-    }, { status: 500 })
-  }
+    let fanData = []
+    try {
+      const response = await fetchWithRetry(
+        'https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/2025-mlb-fan-favs-follows.json'
+      )
+      
+      const text = await response.text()
+      const cleanText = text.replace(/^\uFEFF/, '').trim()
+      
+      try {
+        fanData = JSON.parse(cleanText)
+      } catch (jsonError) {
+        fanData = cleanText
+          .split('\n')
+          .filter(line => line.trim())
+          .map(line => JSON.parse(line))
+      }
+    } catch (error) {
+      console.error('Error fetching fan data:', error)
+    }
 
-    // Process players and their stats
-    const processedPlayers = await Promise.all(
-      playersData.people.map(async (player: any) => {
-        try {
-          // Get both hitting and pitching stats
-          const [battingStatsData, pitchingStatsData] = await Promise.all([
-            processEndpointUrl(
-              `https://statsapi.mlb.com/api/v1/people/${player.id}/stats?stats=season&season=2024&group=hitting`
-            ),
-            processEndpointUrl(
-              `https://statsapi.mlb.com/api/v1/people/${player.id}/stats?stats=season&season=2024&group=pitching`
-            )
-          ])
+    // Process all players with optimized concurrency
+    const processedPlayers = await processAllPlayers(playersData.people)
 
-          const battingStats = battingStatsData.stats?.[0]?.splits?.[0]?.stat
-          const pitchingStats = pitchingStatsData.stats?.[0]?.splits?.[0]?.stat
-
-          return {
-            id: player.id,
-            nameFirstLast: player.nameFirstLast,
-            currentTeam: player.currentTeam,
-            battingStats: battingStats ? {
-              homeRuns: battingStats.homeRuns,
-              battingAverage: battingStats.avg,
-              onBasePercentage: battingStats.obp,
-              slugging: battingStats.slg,
-              hits: battingStats.hits,
-              runsBattedIn: battingStats.rbi,
-              stolenBases: battingStats.stolenBases,
-              strikeouts: battingStats.strikeouts
-            } : undefined,
-            pitchingStats: pitchingStats ? {
-              earnedRunAverage: pitchingStats.era,
-              strikeouts: pitchingStats.strikeouts,
-              wins: pitchingStats.wins,
-              losses: pitchingStats.losses,
-              saves: pitchingStats.saves,
-              inningsPitched: pitchingStats.inningsPitched,
-              whip: pitchingStats.whip,
-              strikeoutsPer9Inn: pitchingStats.strikeoutsPer9Inn
-            } : undefined,
-            followers: fanData.find((f: any) => 
-              f.followed_player_ids?.includes(player.id)
-            )?.followed_player_ids?.length ?? 0
-          }
-        } catch (error) {
-          console.error(`Error processing player ${player.id}:`, error)
-          // Return a minimal valid player object if processing fails
-          return {
-            id: player.id,
-            nameFirstLast: player.nameFirstLast,
-            currentTeam: player.currentTeam,
-            followers: 0
-          }
+    // Update follower counts
+    processedPlayers.forEach(player => {
+      player.followers = fanData.reduce((count: number, entry: any) => {
+        if (Array.isArray(entry?.followed_player_ids) && 
+            entry.followed_player_ids.includes(player.id)) {
+          return count + 1
         }
-      })
-    )
+        return count
+      }, 0)
+    })
 
     return NextResponse.json(processedPlayers)
   } catch (error) {
     console.error('Error in GET handler:', error)
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+    return NextResponse.json({ 
+      error: 'Internal server error',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    }, { status: 500 })
   }
 }
