@@ -2,25 +2,201 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+// import { createClient } from '@/utils/supabase/server';
+import { createClient } from '@supabase/supabase-js'
+
+
+interface Game {
+  gamePk: string;
+  gameDate: string;
+  teams: {
+    home: {
+      team: {
+        id: number;
+        name: string;
+      };
+    };
+    away: {
+      team: {
+        id: number;
+        name: string;
+      };
+    };
+  };
+}
+
+interface StoredPrediction {
+  game_pk: string;
+  game_date: string;
+  predicted_winner: number;
+  home_team_id: number;
+  away_team_id: number;
+  expires_at: string;
+}
+
+interface GameWithStats {
+  gamePk: string;
+  gameDate: string;
+  homeTeam: {
+    id: number;
+    name: string;
+    stats: any[];
+  };
+  awayTeam: {
+    id: number;
+    name: string;
+    stats: any[];
+  };
+}
+
+interface Prediction {
+  gamePk: string;
+  predictedWinner: number;
+}
+
+interface FormattedPrediction {
+  gamePk: string;
+  gameDate: string;
+  homeTeam: {
+    id: number;
+    name: string;
+  };
+  awayTeam: {
+    id: number;
+    name: string;
+  };
+  predictedWinner: number;
+}
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-// Cache for predictions
-const predictionsCache = new Map<string, { timestamp: number; prediction: any }>();
-const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
 
-
-const CACHE_DURATION = 600 * 60 * 1000; // 600 minutes
-const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const RETRY_AFTER = 60 * 1000; // 1 minute
 let lastApiCall = 0;
 
-// Rate Limiter
+const CACHE_DURATION = 600 * 60 * 1000; // 600 minutes
+const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+ 
+const predictionsCache = new Map<string, { timestamp: number; prediction: any }>();
+const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
+
 const limiter = new RateLimiterMemory({
-    points: 10, // 10 requests
-    duration: 60, // per 60 seconds
+  points: 10, 
+  duration: 60,
+});
+
+const MLB_TEAMS: { [key: number]: string } = {
+  108: 'Los Angeles Angels',
+  109: 'Arizona Diamondbacks',
+  110: 'Baltimore Orioles',
+  111: 'Boston Red Sox',
+  112: 'Chicago Cubs',
+  113: 'Cincinnati Reds',
+  114: 'Cleveland Guardians',
+  115: 'Colorado Rockies',
+  116: 'Detroit Tigers',
+  117: 'Houston Astros',
+  118: 'Kansas City Royals',
+  119: 'Los Angeles Dodgers',
+  120: 'Washington Nationals',
+  121: 'New York Mets',
+  133: 'Oakland Athletics',
+  134: 'Pittsburgh Pirates',
+  135: 'San Diego Padres',
+  136: 'Seattle Mariners',
+  137: 'San Francisco Giants',
+  138: 'St. Louis Cardinals',
+  139: 'Tampa Bay Rays',
+  140: 'Texas Rangers',
+  141: 'Toronto Blue Jays',
+  142: 'Minnesota Twins',
+  143: 'Philadelphia Phillies',
+  144: 'Atlanta Braves',
+  145: 'Chicago White Sox',
+  146: 'Miami Marlins',
+  147: 'New York Yankees',
+  158: 'Milwaukee Brewers'
+};
+
+function fetchTeamName(teamId: number): string {
+  return MLB_TEAMS[teamId] || `Team ${teamId}`;
+}
+
+function formatPredictions(predictions: any[], gamesWithStats: any[]): FormattedPrediction[] {
+  // Add debug logging
+  return predictions.map((prediction) => {
+    const gameInfo = gamesWithStats.find(
+      (game) => String(game.gamePk) === String(prediction.gamePk)
+    );
+
+    if (!gameInfo) {
+      console.error(`No matching game found for prediction: ${JSON.stringify(prediction)}`);
+      throw new Error(`No matching game found for gamePk: ${prediction.gamePk}`);
+    }
+
+    return {
+      gamePk: prediction.gamePk,
+      gameDate: gameInfo.gameDate,
+      homeTeam: {
+        id: gameInfo.homeTeam.id,
+        name: gameInfo.homeTeam.name
+      },
+      awayTeam: {
+        id: gameInfo.awayTeam.id,
+        name: gameInfo.awayTeam.name
+      },
+      predictedWinner: prediction.predictedWinner
+    };
   });
+}
+
+
+  async function getStoredPredictions(supabase: any, games: any[]) {
+    const gamePks = games.map(game => game.gamePk);
+    
+    const { data: predictions, error } = await supabase
+      .from('game_predictions')
+      .select('*')
+      .in('game_pk', gamePks)
+      .gt('expires_at', new Date().toISOString());
+      
+    if (error) {
+      console.error('Error fetching predictions from Supabase:', error);
+      return [];
+    }
+    
+    return predictions;
+  }
+  async function storePredictions(supabase: any, predictions: any[], gamesWithStats: any[]) {
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+  
+    const predictionsToInsert = predictions.map(prediction => {
+      const gameInfo = gamesWithStats.find(game => String(game.gamePk) === String(prediction.gamePk));
+      if (!gameInfo) {
+        console.error(`No matching game found for prediction: ${JSON.stringify(prediction)}`);
+        throw new Error(`No matching game found for gamePk: ${prediction.gamePk}`);
+      }
+      return {
+        game_pk: prediction.gamePk,
+        game_date: gameInfo.gameDate,
+        home_team_id: gameInfo.homeTeam.id,
+        away_team_id: gameInfo.awayTeam.id,
+        predicted_winner: prediction.predictedWinner,
+        expires_at: expiresAt.toISOString()
+      };
+    });
+  
+    const { error } = await supabase
+      .from('game_predictions')
+      .insert(predictionsToInsert);
+  
+    if (error) {
+      console.error('Error storing predictions in Supabase:', error);
+      throw error;
+    }
+  }
 
 const fetchWithTimeout = async (url: string, timeout = 5000) => {
   const controller = new AbortController();
@@ -188,148 +364,154 @@ throw new Error('Rate limit reached after multiple retries.'); // If max retries
 }
 
 export async function GET(req: NextRequest) {
-    try {
-    const ip = req.headers.get('x-forwarded-for') || ''; 
+  console.log('Starting GET request');
 
+  try {
+    const ip = req.headers.get('x-forwarded-for') || '';
     await limiter.consume(ip);
 
-    const today = new Date().toISOString().split('T')[0];
-    let startDate = today;
-    let games = await fetchGamesForDateRange(today);
-
-    if (games.length === 0) {
-      startDate = await findNextGameDate();
-      games = await fetchGamesForDateRange(startDate);
-    }
-
-    
-    if (!games.length) {
-      return NextResponse.json(
-        { error: 'No games scheduled for the specified period' },
-        { status: 404 }
-      );
-    }
-
-    // Filter games to only include those with valid teams
-    const validGames = [];
-    for (const game of games) {
-      const homeTeamValid = await validateTeam(game.teams.home.team.id);
-      const awayTeamValid = await validateTeam(game.teams.away.team.id);
-      
-      if (homeTeamValid && awayTeamValid) {
-        validGames.push(game);
-      } else {
-        console.warn(`Skipping game ${game.gamePk} due to invalid team(s)`);
-      }
-    }
-
-    if (validGames.length === 0) {
-      return NextResponse.json(
-        { error: 'No valid games found with active teams' },
-        { status: 404 }
-      );
-    }
-
-    // For each valid game, fetch team stats
-    const gamesWithStats = await Promise.all(
-      validGames.map(async (game: any) => {
-        const homeTeamStats = await fetchTeamStats(game.teams.home.team.id);
-        const awayTeamStats = await fetchTeamStats(game.teams.away.team.id);
-        
-        return {
-          gamePk: game.gamePk,
-          gameDate: game.gameDate,
-          homeTeam: {
-            id: game.teams.home.team.id,
-            name: game.teams.home.team.name,
-            stats: homeTeamStats
-          },
-          awayTeam: {
-            id: game.teams.away.team.id,
-            name: game.teams.away.team.name,
-            stats: awayTeamStats
-          }
-        };
-      })
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!
     );
 
-    let predictionsText;
-    try {
-      predictionsText = await generatePredictions(gamesWithStats);
-    } catch (error: any) {
-      if (error.message.includes('Rate limit')) {
-        return NextResponse.json(
-          { error: error.message },
-          {
-            status: 429,
-            headers: {
-              'Retry-After': '60' // You might want to adjust this based on your retry logic
-            }
-          }
-        );
-      }
-      throw error;
-    }
+    const now = new Date();
+    const thirtyDaysFromNow = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Try to extract JSON from the response
-    let predictions;
-    try {
-      predictions = JSON.parse(predictionsText);
-    } catch (e) {
-      const jsonMatch = predictionsText.match(/\[\s*\{[\s\S]*\}\s*\]/);
-      if (jsonMatch) {
-        predictions = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error('No valid JSON array found in response');
-      }
-    }
-    
-    // Validate the predictions format
-    if (!Array.isArray(predictions) || !predictions.every(p => p.gamePk && p.predictedWinner)) {
-      return NextResponse.json(
-        { error: 'Invalid prediction format' },
-        { status: 400 }
-      );
-    }
+    // Query existing predictions
+    const { data: existingPredictions, error: dbError } = await supabase
+    .from('game_predictions')
+    .select('*')
+    .gte('game_date', now.toISOString().split('T')[0])
+    .lte('game_date', thirtyDaysFromNow.toISOString().split('T')[0])
+    .gt('expires_at', now.toISOString())
+    .order('game_date', { ascending: true });
 
-    // Combine predictions with team information
-    const combinedPredictions = predictions.map(prediction => {
-      const gameInfo = gamesWithStats.find(game => game.gamePk === prediction.gamePk);
-      if (!gameInfo) return null;
-
-      return {
-        gamePk: prediction.gamePk,
-        gameDate: gameInfo.gameDate,
-        homeTeam: {
-          id: gameInfo.homeTeam.id,
-          name: gameInfo.homeTeam.name
-        },
-        awayTeam: {
-          id: gameInfo.awayTeam.id,
-          name: gameInfo.awayTeam.name
-        },
-        predictedWinner: prediction.predictedWinner
-      };
-    }).filter(Boolean);
-
-    if (combinedPredictions.length === 0) {
-      return NextResponse.json(
-        { error: 'Failed to match predictions with game information' },
-        { status: 400 }
-      );
-    }
-
-    combinedPredictions.forEach(prediction => {
-        if (prediction) { 
-          predictionsCache.set(prediction.gamePk, { timestamp: Date.now(), prediction });
-        }
-      });
-
-    return NextResponse.json(combinedPredictions);
-  } catch (rej: any) { 
-    if (rej instanceof Error) {
-        console.error("Rate limit error:", rej)
-    }
-    return new NextResponse('Too Many Requests', { status: 429 });
+  if (dbError) {
+    console.error('Error fetching predictions:', dbError);
+    throw dbError;
   }
-}
+
+       // If we have valid predictions, return them
+       if (existingPredictions && existingPredictions.length > 0) {
+        const formattedPredictions = existingPredictions.map((pred) => ({
+          gamePk: pred.game_pk,
+          gameDate: pred.game_date,
+          homeTeam: {
+            id: pred.home_team_id,
+            name: fetchTeamName(pred.home_team_id)
+          },
+          awayTeam: {
+            id: pred.away_team_id,
+            name: fetchTeamName(pred.away_team_id)
+          },
+          predictedWinner: pred.predicted_winner
+        }));
+        
+        return NextResponse.json(formattedPredictions);
+      }
+  
+      // If no predictions exist, fetch new games and generate predictions
+      console.log('No existing predictions found, fetching new games...');
+      let games = await fetchGamesForDateRange(now.toISOString().split('T')[0]);
+      
+      if (games.length === 0) {
+        console.log('No games found for current date, looking for next game date...');
+        const nextGameDate = await findNextGameDate();
+        games = await fetchGamesForDateRange(nextGameDate);
+      }
+  
+      if (games.length === 0) {
+        console.log('No upcoming games found');
+        return NextResponse.json([]);
+      }
+  
+      // Filter games to only include those with valid teams
+      console.log('Validating teams for games...');
+      const validGames = [];
+      for (const game of games) {
+        const homeTeamValid = await validateTeam(game.teams.home.team.id);
+        const awayTeamValid = await validateTeam(game.teams.away.team.id);
+        
+        if (homeTeamValid && awayTeamValid) {
+          validGames.push(game);
+        }
+      }
+  
+      if (validGames.length === 0) {
+        console.log('No valid games found after team validation');
+        return NextResponse.json([]);
+      }
+  
+      // Fetch stats and generate predictions for new games
+      console.log('Fetching team stats and generating predictions...');
+      const gamesWithStats = await Promise.all(
+        validGames.map(async (game: any) => {
+          const homeTeamStats = await fetchTeamStats(game.teams.home.team.id);
+          const awayTeamStats = await fetchTeamStats(game.teams.away.team.id);
+          
+          return {
+            gamePk: game.gamePk,
+            gameDate: game.gameDate,
+            homeTeam: {
+              id: game.teams.home.team.id,
+              name: game.teams.home.team.name,
+              stats: homeTeamStats
+            },
+            awayTeam: {
+              id: game.teams.away.team.id,
+              name: game.teams.away.team.name,
+              stats: awayTeamStats
+            }
+          };
+        })
+      );
+  
+      // Generate new predictions
+      const predictionsText = await generatePredictions(gamesWithStats);
+      const predictions = JSON.parse(predictionsText);
+      
+      // Store new predictions
+      await storePredictions(supabase, predictions, gamesWithStats);
+  
+      // Format and return the new predictions
+      const formattedPredictions = predictions.map((prediction: any) => {
+        const gameInfo = gamesWithStats.find(
+          game => String(game.gamePk) === String(prediction.gamePk)
+        );
+  
+        if (!gameInfo) {
+          console.error(`No matching game found for prediction: ${JSON.stringify(prediction)}`);
+          return null;
+        }
+  
+        return {
+          gamePk: prediction.gamePk,
+          gameDate: gameInfo.gameDate,
+          homeTeam: {
+            id: gameInfo.homeTeam.id,
+            name: gameInfo.homeTeam.name
+          },
+          awayTeam: {
+            id: gameInfo.awayTeam.id,
+            name: gameInfo.awayTeam.name
+          },
+          predictedWinner: prediction.predictedWinner
+        };
+      }).filter(Boolean);
+  
+      return NextResponse.json(formattedPredictions);
+  
+    } catch (error: any) {
+      console.error('Error in game predictions:', error);
+      
+      if (error.message?.includes('Rate limit')) {
+        return new NextResponse('Too Many Requests', { status: 429 });
+      }
+      
+      return NextResponse.json(
+        { error: 'Failed to fetch or generate predictions' }, 
+        { status: 500 }
+      );
+    }
+  }

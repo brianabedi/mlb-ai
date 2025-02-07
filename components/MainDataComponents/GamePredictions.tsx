@@ -59,23 +59,45 @@ export default function GamePredictions() {
       const data = await response.json();
       
       // Validate the received data
-      if (!Array.isArray(data) || data.length === 0) {
-        throw new Error('No games found for the specified period');
+      if (!Array.isArray(data)) {
+        throw new Error('Invalid response format: expected an array');
       }
-      
+      if (data.length === 0) {
+        setError('No upcoming games found. Check back later for new predictions.');
+        setPredictions([]);
+        setUniqueDates([]);
+        return;
+      }
+      const validPredictions = data.filter(prediction => {
+        return (
+          prediction.gamePk &&
+          prediction.gameDate &&
+          prediction.homeTeam?.id &&
+          prediction.homeTeam?.name &&
+          prediction.awayTeam?.id &&
+          prediction.awayTeam?.name &&
+          typeof prediction.predictedWinner === 'number'
+        );
+      });
+
+      if (validPredictions.length === 0) {
+        throw new Error('No valid predictions found in the response');
+      }
       // Extract unique dates and sort them
-      const dates = [...new Set(data.map(game => game.gameDate))].sort();
+      const dates = [...new Set(validPredictions.map(game => game.gameDate))].sort();
       setUniqueDates(dates);
       
       // Set the first date as selected by default if none is selected
-      if (!selectedDate) {
+      if (!selectedDate || !dates.includes(selectedDate)) {
         setSelectedDate(dates[0]);
       }
       
-      setPredictions(data);
+      setPredictions(validPredictions);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
+      setError(err instanceof Error ? err.message : 'An error occurred while fetching predictions');
       console.error('Prediction error:', err);
+      setPredictions([]);
+      setUniqueDates([]);
     } finally {
       setLoading(false);
     }
@@ -99,20 +121,50 @@ export default function GamePredictions() {
       </Card>
     );
   }
-
   if (error) {
     return (
-      <Card className="w-full ">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle>Game Predictions</CardTitle>
-          <CardDescription className="text-red-500">Error: {error}</CardDescription>
+          <CardDescription className="text-red-500">{error}</CardDescription>
         </CardHeader>
+        <CardFooter>
+          <Button 
+            variant="outline" 
+            className="w-full" 
+            onClick={fetchPredictions}
+            disabled={loading}
+          >
+            Try Again
+          </Button>
+        </CardFooter>
+      </Card>
+    );
+  }
+
+  if (predictions.length === 0) {
+    return (
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle>Game Predictions</CardTitle>
+          <CardDescription>No predictions available at this time. Check back later.</CardDescription>
+        </CardHeader>
+        <CardFooter>
+          <Button 
+            variant="outline" 
+            className="w-full" 
+            onClick={fetchPredictions}
+            disabled={loading}
+          >
+            Refresh
+          </Button>
+        </CardFooter>
       </Card>
     );
   }
 
   return (
-    <Card className="w-full ">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Game Predictions</CardTitle>
         <CardDescription>AI-powered predictions for upcoming games</CardDescription>
