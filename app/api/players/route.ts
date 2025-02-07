@@ -15,7 +15,7 @@ interface CacheEntry {
 }
 
 // In-memory cache
-let cache: CacheEntry | null = null;
+let cache: CacheEntry = { timestamp: 0, data: [] }; 
 
 async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = 0): Promise<Response> {
   try {
@@ -194,62 +194,45 @@ async function getPlayersWithCache() {
   const now = Date.now()
 
   // If we have fresh cache, return it
-  if (cache && (now - cache.timestamp) < CACHE_DURATION) {
-    return cache.data
+  if (now - cache.timestamp < CACHE_DURATION) {
+    return cache.data;
   }
 
-  // If cache is stale but not too old, return stale data and revalidate in background
-  if (
-    cache && 
-    (now - cache.timestamp) < STALE_WHILE_REVALIDATE_DURATION && 
-    !cache.isRevalidating
-  ) {
-    // Start background revalidation
-    cache.isRevalidating = true
+  // Check if the cache is stale but still usable for stale-while-revalidate
+  if (now - cache.timestamp < STALE_WHILE_REVALIDATE_DURATION && !cache.isRevalidating) {
+    cache.isRevalidating = true;
     fetchAndProcessPlayers().then(newData => {
-      cache = {
-        timestamp: Date.now(),
-        data: newData,
-        isRevalidating: false
-      }
+      cache = { timestamp: Date.now(), data: newData, isRevalidating: false };
     }).catch(error => {
-      console.error('Background revalidation failed:', error)
-      cache.isRevalidating = false
-    })
-    
-    // Return stale data immediately
-    return cache.data
+      console.error('Background revalidation failed:', error);
+      cache.isRevalidating = false;
+    });
+    return cache.data; 
   }
 
-  // If cache is too old or doesn't exist, fetch new data
-  const newData = await fetchAndProcessPlayers()
-  
-  cache = {
-    timestamp: now,
-    data: newData
-  }
-
-  return newData
+  // If cache is invalid or doesn't exist, fetch new data
+  const newData = await fetchAndProcessPlayers();
+  cache = { timestamp: now, data: newData };
+  return newData;
 }
 
 export const revalidate = 300
 
 export async function GET() {
   try {
-    const players = await getPlayersWithCache()
-    return NextResponse.json(players)
+    const players = await getPlayersWithCache();
+    return NextResponse.json(players);
   } catch (error) {
-    console.error('Error in GET handler:', error)
-    
-    // If we have stale cache and there's an error, return stale data
-    if (cache?.data) {
-      console.log('Returning stale cache due to error')
-      return NextResponse.json(cache.data)
+    console.error('Error in GET handler:', error);
+
+    if (cache.data.length > 0) { 
+      console.log('Returning stale cache due to error');
+      return NextResponse.json(cache.data);
     }
-    
-    return NextResponse.json({ 
+
+    return NextResponse.json({
       error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 })
+    }, { status: 500 });
   }
 }
