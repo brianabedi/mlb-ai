@@ -1,12 +1,5 @@
+// app/page.tsx
 import Image from "next/image";
-// import {
-//   Popover,
-//   PopoverContent,
-//   PopoverTrigger,
-// } from "@/components/ui/popover"
-// import { Button } from "@/components/ui/button"
-// import { Input } from "@/components/ui/input"
-// import { Label } from "@/components/ui/label"
 import AuthPopover from "@/components/AuthPopover";
 import MainData from "@/components/MainData";
 import NewsFeed from "@/components/NewsFeed";

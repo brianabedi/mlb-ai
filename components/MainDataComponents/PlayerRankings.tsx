@@ -10,6 +10,17 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -68,6 +79,8 @@ export default function PlayerRankings() {
   const [error, setError] = useState<string | null>(null)
   const [followedPlayers, setFollowedPlayers] = useState<number[]>([])
   const [supabase] = useState(() => createClient())
+  const [showLoginDialog, setShowLoginDialog] = useState(false)
+  const [isAuthChecking, setIsAuthChecking] = useState(true)
 
   useEffect(() => {
     const fetchPlayers = async () => {
@@ -77,8 +90,6 @@ export default function PlayerRankings() {
           throw new Error('Failed to fetch player data')
         }
         const data = await response.json()
-        console.log("sorted players here")
-        console.log(data)
         setPlayers(data)
         setError(null)
       } catch (err) {
@@ -94,23 +105,27 @@ export default function PlayerRankings() {
   useEffect(() => {
     const fetchFollowedPlayers = async () => {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser()
-        if (authError) throw authError
+        setIsAuthChecking(true)
+        const { data: { session } } = await supabase.auth.getSession()
         
-        if (user) {
+        if (session?.user) {
           const { data: follows, error: dbError } = await supabase
             .from('player_follows')
             .select('player_id')
-            .eq('user_id', user.id)
+            .eq('user_id', session.user.id)
           
           if (dbError) throw dbError
           if (follows) {
             setFollowedPlayers(follows.map(f => f.player_id))
           }
+        } else {
+          setFollowedPlayers([])
         }
       } catch (err) {
         console.error('Error fetching followed players:', err)
         setFollowedPlayers([])
+      } finally {
+        setIsAuthChecking(false)
       }
     }
 
@@ -133,42 +148,36 @@ export default function PlayerRankings() {
 
   const handleFollowToggle = async (playerId: number) => {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser()
-      if (authError) throw authError
-      
-      if (!user) {
-        console.error('User must be logged in to follow players')
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.user) {
+        setShowLoginDialog(true)
         return
       }
 
       if (followedPlayers.includes(playerId)) {
-        // Optimistic update
         setFollowedPlayers(followedPlayers.filter(id => id !== playerId))
         
         const { error } = await supabase
           .from('player_follows')
           .delete()
-          .eq('user_id', user.id)
+          .eq('user_id', session.user.id)
           .eq('player_id', playerId)
 
         if (error) {
-          // Revert on error
           setFollowedPlayers(prev => [...prev, playerId])
           throw error
         }
       } else {
-        // Optimistic update
         setFollowedPlayers(prev => [...prev, playerId])
         
         const { error } = await supabase
           .from('player_follows')
           .insert([
-            { user_id: user.id, player_id: playerId }
+            { user_id: session.user.id, player_id: playerId }
           ])
           .select()
 
         if (error) {
-          // Revert on error
           setFollowedPlayers(prev => prev.filter(id => id !== playerId))
           throw error
         }
@@ -197,7 +206,48 @@ export default function PlayerRankings() {
     }
   })
 
-  return (
+  if (loading) {
+    return (
+      <Card className="w-full mt-4">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-center h-32">
+            <p className="text-gray-500">Loading player rankings...</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+  if (error) {
+    return (
+      <Card className="w-full mt-4">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-center h-32">
+            <p className="text-red-500">Error: {error}</p>
+          </div>
+        </CardContent>
+      </Card>
+    )
+  }
+
+
+  return ( <>
+     <AlertDialog open={showLoginDialog} onOpenChange={setShowLoginDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Login Required</AlertDialogTitle>
+            <AlertDialogDescription>
+              Please log in to follow players and receive updates about their performance.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+            {/* <AlertDialogAction onClick={() => window.location.href = '/login'}>
+              Log In
+            </AlertDialogAction> */}
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     <Card className="w-full  mt-4">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
@@ -325,23 +375,23 @@ export default function PlayerRankings() {
                       {player.nameFirstLast}
                     </div>
                   </TableCell>
-                  <div className="flex    justify-center ">
-
-                   {player.currentTeam.logo ? (  
-    <div className="h-6 w-6   "  >
-
-       <img 
-      src={player.currentTeam.logo} 
-      alt={`${player.currentTeam.name} logo`}  
-      className=" object-cover"  
-    />
-    </div>
-   
-  ) : (
-    <Badge variant="secondary">{player.currentTeam.name}</Badge> // Fallback to name if no logo
-  )}
-  </div>
-                  {activeTab === 'batting' ? (
+ 
+                  <TableCell>
+                    {player.currentTeam.logo ? (
+                      <div className="flex justify-center">
+                        <div className="h-6 w-6">
+                          <img 
+                            src={player.currentTeam.logo} 
+                            alt={`${player.currentTeam.name} logo`}  
+                            className="object-cover"
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <Badge variant="secondary">{player.currentTeam.name}</Badge>
+                    )}
+                  </TableCell>
+                   {activeTab === 'batting' ? (
                     <>
                       <TableCell className="text-right">{player.battingStats?.homeRuns ?? '-'}</TableCell>
                       <TableCell className="text-right">{player.battingStats?.battingAverage ?? '-'}</TableCell>
@@ -384,6 +434,6 @@ export default function PlayerRankings() {
           Updated daily based on MLB statistics and social media metrics
         </p>
       </CardFooter>
-    </Card>
+    </Card></>
   )
 }

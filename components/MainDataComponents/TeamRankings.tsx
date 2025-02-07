@@ -51,7 +51,7 @@ export default function TeamRankings() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortBy, setSortBy] = useState<SortField>('winningPercentage');
   const [supabase] = useState(() => createClient());
-
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
   useEffect(() => {
     const fetchTeams = async () => {
       try {
@@ -75,23 +75,27 @@ export default function TeamRankings() {
   useEffect(() => {
     const fetchFollowedTeams = async () => {
       try {
-        const { data: { user }, error: authError } = await supabase.auth.getUser();
-        if (authError) throw authError;
+        setIsAuthChecking(true);
+        const { data: { session } } = await supabase.auth.getSession();
         
-        if (user) {
+        if (session?.user) {
           const { data: follows, error: dbError } = await supabase
             .from('team_follows')
             .select('team_id')
-            .eq('user_id', user.id);
+            .eq('user_id', session.user.id);
           
           if (dbError) throw dbError;
           if (follows) {
             setFollowedTeams(follows.map(f => f.team_id));
           }
+        } else {
+          setFollowedTeams([]);
         }
       } catch (err) {
         console.error('Error fetching followed teams:', err);
         setFollowedTeams([]);
+      } finally {
+        setIsAuthChecking(false);
       }
     };
 
@@ -114,50 +118,43 @@ export default function TeamRankings() {
 
   const handleFollowToggle = async (teamId: number) => {
     try {
-      const { data: { user }, error: authError } = await supabase.auth.getUser();
-      if (authError) throw authError;
-      
-      if (!user) {
-        // You might want to redirect to login or show a toast notification
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) {
+        // You might want to show a login dialog here
         console.error('User must be logged in to follow teams');
         return;
       }
 
       if (followedTeams.includes(teamId)) {
-        // Optimistic update
         setFollowedTeams(followedTeams.filter(id => id !== teamId));
         
         const { error } = await supabase
           .from('team_follows')
           .delete()
-          .eq('user_id', user.id)
+          .eq('user_id', session.user.id)
           .eq('team_id', teamId);
 
         if (error) {
-          // Revert on error
           setFollowedTeams(prev => [...prev, teamId]);
           throw error;
         }
       } else {
-        // Optimistic update
         setFollowedTeams(prev => [...prev, teamId]);
         
         const { error } = await supabase
           .from('team_follows')
           .insert([
-            { user_id: user.id, team_id: teamId }
+            { user_id: session.user.id, team_id: teamId }
           ])
           .select();
 
         if (error) {
-          // Revert on error
           setFollowedTeams(prev => prev.filter(id => id !== teamId));
           throw error;
         }
       }
     } catch (err) {
       console.error('Error toggling team follow:', err);
-      // You might want to show a toast notification here
     }
   };
 
