@@ -320,9 +320,10 @@ export async function GET(req: NextRequest) {
     }
 
     combinedPredictions.forEach(prediction => {
-        predictionsCache.set(prediction.gamePk, { timestamp: Date.now(), prediction });
-    });
-
+        if (prediction) { 
+          predictionsCache.set(prediction.gamePk, { timestamp: Date.now(), prediction });
+        }
+      });
 
     return NextResponse.json(combinedPredictions);
   } catch (rej: any) { 
