@@ -5,6 +5,17 @@ const BATCH_SIZE = 10
 const MAX_RETRIES = 2
 const RETRY_DELAY = 500 // ms
 const CONCURRENT_REQUESTS = 3
+const CACHE_DURATION = 5000 * 60 * 1000 // 5 minutes
+const STALE_WHILE_REVALIDATE_DURATION = 30 * 60 * 1000 // 30 minutes
+
+interface CacheEntry {
+  timestamp: number;
+  data: any[];
+  isRevalidating?: boolean;
+}
+
+// In-memory cache
+let cache: CacheEntry | null = null;
 
 async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount = 0): Promise<Response> {
   try {
@@ -32,23 +43,25 @@ async function fetchWithRetry(url: string, options: RequestInit = {}, retryCount
   }
 }
 
-async function fetchPlayerStats(playerId: number) {
+async function fetchPlayerStats(playerId: number, currentTeamLink: string) {  
   try {
-    const [battingResponse, pitchingResponse] = await Promise.all([
+    const [battingResponse, pitchingResponse, teamResponse] = await Promise.all([
       fetchWithRetry(
         `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=season&season=2024&group=hitting`
       ),
       fetchWithRetry(
         `https://statsapi.mlb.com/api/v1/people/${playerId}/stats?stats=season&season=2024&group=pitching`
-      )
+      ),
+      fetchWithRetry(`https://statsapi.mlb.com${currentTeamLink}`)
     ])
 
-    const [battingStatsData, pitchingStatsData] = await Promise.all([
+    const [battingStatsData, pitchingStatsData, teamData] = await Promise.all([
       battingResponse.json(),
-      pitchingResponse.json()
-    ])
+      pitchingResponse.json(),
+      teamResponse.json()
+    ]);
 
-    return { battingStatsData, pitchingStatsData }
+    return { battingStatsData, pitchingStatsData, teamData };  
   } catch (error) {
     console.error(`Error fetching stats for player ${playerId}:`, error)
     return { battingStatsData: null, pitchingStatsData: null }
@@ -59,15 +72,23 @@ async function processBatch(players: any[]) {
   return Promise.all(
     players.map(async (player) => {
       try {
-        const { battingStatsData, pitchingStatsData } = await fetchPlayerStats(player.id)
+        const { battingStatsData, pitchingStatsData, teamData } = await fetchPlayerStats(player.id, player.currentTeam.link);  
         
         const battingStats = battingStatsData?.stats?.[0]?.splits?.[0]?.stat
         const pitchingStats = pitchingStatsData?.stats?.[0]?.splits?.[0]?.stat
         
+        const teamId = player.currentTeam.id;  
+        const logoUrl = `https://www.mlbstatic.com/team-logos/${teamId}.svg`;  
+
         return {
           id: player.id,
           nameFirstLast: player.nameFirstLast,
-          currentTeam: player.currentTeam,
+          currentTeam: {
+            id: player.currentTeam.id,
+            link: player.currentTeam.link,
+            name: player.currentTeam.name, 
+            logo: logoUrl  
+          },
           battingStats: battingStats ? {
             homeRuns: battingStats.homeRuns,
             battingAverage: battingStats.avg,
@@ -119,65 +140,113 @@ async function processAllPlayers(players: any[]) {
   return results
 }
 
+async function fetchAndProcessPlayers() {
+  // Get base player data
+  const response = await fetchWithRetry(
+    'https://statsapi.mlb.com/api/v1/sports/1/players?season=2024'
+  )
+  const playersData = await response.json()
+  
+  if (!playersData?.people) {
+    throw new Error('Invalid player data format received')
+  }
+
+  // Get fan interaction data
+  let fanData = []
+  try {
+    const fanResponse = await fetchWithRetry(
+      'https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/2025-mlb-fan-favs-follows.json'
+    )
+    
+    const text = await fanResponse.text()
+    const cleanText = text.replace(/^\uFEFF/, '').trim()
+    
+    try {
+      fanData = JSON.parse(cleanText)
+    } catch (jsonError) {
+      fanData = cleanText
+        .split('\n')
+        .filter(line => line.trim())
+        .map(line => JSON.parse(line))
+    }
+  } catch (error) {
+    console.error('Error fetching fan data:', error)
+  }
+
+  // Process all players with optimized concurrency
+  const processedPlayers = await processAllPlayers(playersData.people)
+
+  // Update follower counts
+  processedPlayers.forEach(player => {
+    player.followers = fanData.reduce((count: number, entry: any) => {
+      if (Array.isArray(entry?.followed_player_ids) && 
+          entry.followed_player_ids.includes(player.id)) {
+        return count + 1
+      }
+      return count
+    }, 0)
+  })
+
+  return processedPlayers
+}
+
+async function getPlayersWithCache() {
+  const now = Date.now()
+
+  // If we have fresh cache, return it
+  if (cache && (now - cache.timestamp) < CACHE_DURATION) {
+    return cache.data
+  }
+
+  // If cache is stale but not too old, return stale data and revalidate in background
+  if (
+    cache && 
+    (now - cache.timestamp) < STALE_WHILE_REVALIDATE_DURATION && 
+    !cache.isRevalidating
+  ) {
+    // Start background revalidation
+    cache.isRevalidating = true
+    fetchAndProcessPlayers().then(newData => {
+      cache = {
+        timestamp: Date.now(),
+        data: newData,
+        isRevalidating: false
+      }
+    }).catch(error => {
+      console.error('Background revalidation failed:', error)
+      cache.isRevalidating = false
+    })
+    
+    // Return stale data immediately
+    return cache.data
+  }
+
+  // If cache is too old or doesn't exist, fetch new data
+  const newData = await fetchAndProcessPlayers()
+  
+  cache = {
+    timestamp: now,
+    data: newData
+  }
+
+  return newData
+}
+
 export const revalidate = 300
 
 export async function GET() {
   try {
-    // Get base player data
-    let playersData
-    try {
-      const response = await fetchWithRetry(
-        'https://statsapi.mlb.com/api/v1/sports/1/players?season=2024'
-      )
-      playersData = await response.json()
-      
-      if (!playersData?.people) {
-        throw new Error('Invalid player data format received')
-      }
-    } catch (error) {
-      console.error('Error fetching base player data:', error)
-      return NextResponse.json({ error: 'Failed to fetch base player data' }, { status: 500 })
-    }
-
-    // Get fan interaction data
-    let fanData = []
-    try {
-      const response = await fetchWithRetry(
-        'https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/2025-mlb-fan-favs-follows.json'
-      )
-      
-      const text = await response.text()
-      const cleanText = text.replace(/^\uFEFF/, '').trim()
-      
-      try {
-        fanData = JSON.parse(cleanText)
-      } catch (jsonError) {
-        fanData = cleanText
-          .split('\n')
-          .filter(line => line.trim())
-          .map(line => JSON.parse(line))
-      }
-    } catch (error) {
-      console.error('Error fetching fan data:', error)
-    }
-
-    // Process all players with optimized concurrency
-    const processedPlayers = await processAllPlayers(playersData.people)
-
-    // Update follower counts
-    processedPlayers.forEach(player => {
-      player.followers = fanData.reduce((count: number, entry: any) => {
-        if (Array.isArray(entry?.followed_player_ids) && 
-            entry.followed_player_ids.includes(player.id)) {
-          return count + 1
-        }
-        return count
-      }, 0)
-    })
-
-    return NextResponse.json(processedPlayers)
+    const players = await getPlayersWithCache()
+    return NextResponse.json(players)
   } catch (error) {
     console.error('Error in GET handler:', error)
+    
+    // If we have stale cache and there's an error, return stale data
+    if (cache?.data) {
+      console.log('Returning stale cache due to error')
+      return NextResponse.json(cache.data)
+    }
+    
     return NextResponse.json({ 
       error: 'Internal server error',
       details: error instanceof Error ? error.message : 'Unknown error'

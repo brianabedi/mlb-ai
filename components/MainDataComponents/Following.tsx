@@ -19,7 +19,7 @@ import {
   } from "@/components/ui/carousel"
 export default function Following() {
   return (
-    <Card className="w-full">
+    <Card className="w-full sm:col-span-1 col-span-2">
       <CardHeader>
         <CardTitle>Following</CardTitle>
         <CardDescription></CardDescription>

@@ -12,7 +12,7 @@ import {
  
 export default function TeamRankings() {
   return (
-    <Card className="w-full sm:col-span-2">
+    <Card className="w-full col-span-2">
       <CardHeader>
         <CardTitle>Team Rankings</CardTitle>
         <CardDescription></CardDescription>

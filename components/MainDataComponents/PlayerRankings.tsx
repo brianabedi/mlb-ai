@@ -49,7 +49,10 @@ interface Player {
   id: number
   nameFirstLast: string
   currentTeam: {
-    name: string
+    id: number;
+    link: string;
+    name: string;
+    logo: string | null; 
   }
   battingStats?: BattingStats
   pitchingStats?: PitchingStats
@@ -71,6 +74,8 @@ export default function PlayerRankings() {
           throw new Error('Failed to fetch player data')
         }
         const data = await response.json()
+        console.log("sorted players here")
+        console.log(data)
         setPlayers(data)
         setError(null)
       } catch (err) {
@@ -118,8 +123,8 @@ export default function PlayerRankings() {
             <TabsTrigger value="pitching">Pitching Stats</TabsTrigger>
           </TabsList>
           <TabsContent value="batting" className="space-y-4">
-            <div className="flex gap-2">
-              <Button 
+          <div className="flex flex-wrap gap-2 mb-2">
+          <Button 
                 variant={sortBy === 'homeRuns' ? 'default' : 'outline'}
                 onClick={() => setSortBy('homeRuns')}
                 className="flex items-center gap-2"
@@ -180,6 +185,8 @@ export default function PlayerRankings() {
         ) : error ? (
           <div className="text-center py-8 text-red-500">{error}</div>
         ) : (
+          <div className="max-h-[350px] overflow-y-auto"> {/* Added scrollable container */}
+
           <Table>
             <TableHeader>
               <TableRow>
@@ -212,9 +219,10 @@ export default function PlayerRankings() {
                   <TableCell className="font-medium">{index + 1}</TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
-                      <Avatar className="h-8 w-8">
+                      <Avatar className="h-8 w-8 relative">
                         <AvatarImage 
                           src={`https://securea.mlb.com/mlb/images/players/head_shot/${player.id}.jpg`} 
+                          className="object-cover" 
                           alt={player.nameFirstLast} 
                         />
                         <AvatarFallback>
@@ -224,9 +232,15 @@ export default function PlayerRankings() {
                       {player.nameFirstLast}
                     </div>
                   </TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{player.currentTeam.name}</Badge>
-                  </TableCell>
+                   {player.currentTeam.logo ? ( // Check if logo URL exists
+    <img 
+      src={player.currentTeam.logo} 
+      alt={`${player.currentTeam.name} logo`}  // Important for accessibility!
+      className="h-6 w-6 rounded-full object-contain" // Adjust size as needed
+    />
+  ) : (
+    <Badge variant="secondary">{player.currentTeam.name}</Badge> // Fallback to name if no logo
+  )}
                   {activeTab === 'batting' ? (
                     <>
                       <TableCell className="text-right">{player.battingStats?.homeRuns ?? '-'}</TableCell>
@@ -249,6 +263,7 @@ export default function PlayerRankings() {
               ))}
             </TableBody>
           </Table>
+          </div>
         )}
       </CardContent>
       <CardFooter className="flex justify-between">
