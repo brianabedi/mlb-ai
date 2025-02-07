@@ -14,7 +14,7 @@ import NewsFeed from "@/components/NewsFeed";
 export default function Home() {
   return (
     <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center
-     min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
+     min-h-screen p-8 pb-20 gap-8 sm:p-20 font-[family-name:var(--font-geist-sans)] ">
           <header className="row-start-1 w-full flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Image

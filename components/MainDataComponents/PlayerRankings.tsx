@@ -108,7 +108,7 @@ export default function PlayerRankings() {
   })
 
   return (
-    <Card className="w-full col-span-2">
+    <Card className="w-full  mt-4">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <Award className="h-6 w-6" />
@@ -232,15 +232,22 @@ export default function PlayerRankings() {
                       {player.nameFirstLast}
                     </div>
                   </TableCell>
-                   {player.currentTeam.logo ? ( // Check if logo URL exists
-    <img 
+                  <div className="flex    justify-center ">
+
+                   {player.currentTeam.logo ? (  
+    <div className="h-6 w-6   "  >
+
+       <img 
       src={player.currentTeam.logo} 
-      alt={`${player.currentTeam.name} logo`}  // Important for accessibility!
-      className="h-6 w-6 rounded-full object-contain" // Adjust size as needed
+      alt={`${player.currentTeam.name} logo`}  
+      className=" object-cover"  
     />
+    </div>
+   
   ) : (
     <Badge variant="secondary">{player.currentTeam.name}</Badge> // Fallback to name if no logo
   )}
+  </div>
                   {activeTab === 'batting' ? (
                     <>
                       <TableCell className="text-right">{player.battingStats?.homeRuns ?? '-'}</TableCell>

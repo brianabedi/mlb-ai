@@ -1,6 +1,5 @@
 import * as React from "react"
-
-import { Button } from "@/components/ui/button"
+ 
 import {
   Card,
   CardContent,
@@ -12,7 +11,7 @@ import {
  
 export default function TeamRankings() {
   return (
-    <Card className="w-full col-span-2">
+    <Card className="w-full mt-4">
       <CardHeader>
         <CardTitle>Team Rankings</CardTitle>
         <CardDescription></CardDescription>

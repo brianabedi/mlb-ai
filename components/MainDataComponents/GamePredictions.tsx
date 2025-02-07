@@ -91,7 +91,7 @@ export default function GamePredictions() {
 
   if (loading) {
     return (
-      <Card className="w-full sm:col-span-2">
+      <Card className="w-full  ">
         <CardHeader>
           <CardTitle>Game Predictions</CardTitle>
           <CardDescription>Loading predictions...</CardDescription>
@@ -102,7 +102,7 @@ export default function GamePredictions() {
 
   if (error) {
     return (
-      <Card className="w-full sm:col-span-2">
+      <Card className="w-full ">
         <CardHeader>
           <CardTitle>Game Predictions</CardTitle>
           <CardDescription className="text-red-500">Error: {error}</CardDescription>
@@ -112,7 +112,7 @@ export default function GamePredictions() {
   }
 
   return (
-    <Card className="w-full col-span-2">
+    <Card className="w-full ">
       <CardHeader>
         <CardTitle>Game Predictions</CardTitle>
         <CardDescription>AI-powered predictions for upcoming games</CardDescription>

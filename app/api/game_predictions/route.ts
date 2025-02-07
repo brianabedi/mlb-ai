@@ -11,7 +11,7 @@ const predictionsCache = new Map<string, { timestamp: number; prediction: any }>
 const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
 
 
-const CACHE_DURATION = 15 * 60 * 1000; // 15 minutes
+const CACHE_DURATION = 600 * 60 * 1000; // 600 minutes
 const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
 const RETRY_AFTER = 60 * 1000; // 1 minute
 let lastApiCall = 0;
