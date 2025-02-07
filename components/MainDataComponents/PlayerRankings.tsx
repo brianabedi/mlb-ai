@@ -21,7 +21,8 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Award, TrendingUp, Users } from "lucide-react"
+import { Award, TrendingUp, Users, Plus, Minus } from "lucide-react"
+import { createClient } from '@/utils/supabase/client'
 
 interface PitchingStats {
   earnedRunAverage: string
@@ -62,9 +63,11 @@ interface Player {
 export default function PlayerRankings() {
   const [players, setPlayers] = useState<Player[]>([])
   const [activeTab, setActiveTab] = useState('batting')
-  const [sortBy, setSortBy] = useState<string>('followers')
+  const [sortBy, setSortBy] = useState<string>('homeRuns')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [followedPlayers, setFollowedPlayers] = useState<number[]>([])
+  const [supabase] = useState(() => createClient())
 
   useEffect(() => {
     const fetchPlayers = async () => {
@@ -87,6 +90,93 @@ export default function PlayerRankings() {
 
     fetchPlayers()
   }, [])
+
+  useEffect(() => {
+    const fetchFollowedPlayers = async () => {
+      try {
+        const { data: { user }, error: authError } = await supabase.auth.getUser()
+        if (authError) throw authError
+        
+        if (user) {
+          const { data: follows, error: dbError } = await supabase
+            .from('player_follows')
+            .select('player_id')
+            .eq('user_id', user.id)
+          
+          if (dbError) throw dbError
+          if (follows) {
+            setFollowedPlayers(follows.map(f => f.player_id))
+          }
+        }
+      } catch (err) {
+        console.error('Error fetching followed players:', err)
+        setFollowedPlayers([])
+      }
+    }
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        fetchFollowedPlayers()
+      } else {
+        setFollowedPlayers([])
+      }
+    })
+
+    fetchFollowedPlayers()
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [supabase])
+
+  const handleFollowToggle = async (playerId: number) => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
+      
+      if (!user) {
+        console.error('User must be logged in to follow players')
+        return
+      }
+
+      if (followedPlayers.includes(playerId)) {
+        // Optimistic update
+        setFollowedPlayers(followedPlayers.filter(id => id !== playerId))
+        
+        const { error } = await supabase
+          .from('player_follows')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('player_id', playerId)
+
+        if (error) {
+          // Revert on error
+          setFollowedPlayers(prev => [...prev, playerId])
+          throw error
+        }
+      } else {
+        // Optimistic update
+        setFollowedPlayers(prev => [...prev, playerId])
+        
+        const { error } = await supabase
+          .from('player_follows')
+          .insert([
+            { user_id: user.id, player_id: playerId }
+          ])
+          .select()
+
+        if (error) {
+          // Revert on error
+          setFollowedPlayers(prev => prev.filter(id => id !== playerId))
+          throw error
+        }
+      }
+    } catch (err) {
+      console.error('Error toggling player follow:', err)
+    }
+  }
 
   const sortedPlayers = [...players].sort((a, b) => {
     switch (sortBy) {
@@ -132,6 +222,7 @@ export default function PlayerRankings() {
                 <TrendingUp className="h-4 w-4" />
                 Home Runs
               </Button>
+
               <Button 
                 variant={sortBy === 'battingAverage' ? 'default' : 'outline'}
                 onClick={() => setSortBy('battingAverage')}
@@ -140,14 +231,14 @@ export default function PlayerRankings() {
                 <TrendingUp className="h-4 w-4" />
                 Batting Avg
               </Button>
-              <Button 
+              {/* <Button 
                 variant={sortBy === 'followers' ? 'default' : 'outline'}
                 onClick={() => setSortBy('followers')}
                 className="flex items-center gap-2"
               >
                 <Users className="h-4 w-4" />
                 Followers
-              </Button>
+              </Button> */}
             </div>
           </TabsContent>
           <TabsContent value="pitching" className="space-y-4">
@@ -210,7 +301,9 @@ export default function PlayerRankings() {
                     <TableHead className="text-right">K/9</TableHead>
                   </>
                 )}
-                <TableHead className="text-right">Followers</TableHead>
+               <TableHead className="text-right">Follow</TableHead>
+
+                {/* <TableHead className="text-right">Followers</TableHead> */}
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -265,7 +358,20 @@ export default function PlayerRankings() {
                       <TableCell className="text-right">{player.pitchingStats?.strikeoutsPer9Inn ?? '-'}</TableCell>
                     </>
                   )}
-                  <TableCell className="text-right">{player.followers.toLocaleString()}</TableCell>
+                  {/* <TableCell className="text-right">{player.followers.toLocaleString()}</TableCell> */}
+                  <TableCell className="text-right">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleFollowToggle(player.id)}
+                      >
+                        {followedPlayers.includes(player.id) ? (
+                          <Minus className="h-4 w-4 text-red-400" />
+                        ) : (
+                          <Plus className="h-4 w-4 text-blue-400" />
+                        )}
+                      </Button>
+                    </TableCell>
                 </TableRow>
               ))}
             </TableBody>
