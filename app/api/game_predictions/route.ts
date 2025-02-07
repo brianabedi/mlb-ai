@@ -189,7 +189,9 @@ throw new Error('Rate limit reached after multiple retries.'); // If max retries
 
 export async function GET(req: NextRequest) {
     try {
-    await limiter.consume(req.ip);
+    const ip = req.headers.get('x-forwarded-for') || ''; 
+
+    await limiter.consume(ip);
 
     const today = new Date().toISOString().split('T')[0];
     let startDate = today;
@@ -323,11 +325,10 @@ export async function GET(req: NextRequest) {
 
 
     return NextResponse.json(combinedPredictions);
-  } catch (error) {
-    console.error('Error in GET handler:', error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : 'Failed to generate predictions' },
-      { status: 500 }
-    );
+  } catch (rej: any) { 
+    if (rej instanceof Error) {
+        console.error("Rate limit error:", rej)
+    }
+    return new NextResponse('Too Many Requests', { status: 429 });
   }
 }
