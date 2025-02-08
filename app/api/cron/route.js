@@ -8,7 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 import { GoogleAuth } from 'google-auth-library';
 import { JWT } from 'google-auth-library';
-console.log("GOOGLE_APPLICATION_CREDENTIALS:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
+// console.log("GOOGLE_APPLICATION_CREDENTIALS:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
 import fs from 'fs';
 
 const emailConfig = {
@@ -26,13 +26,45 @@ const emailConfig = {
 
 
 let predictionClient;
-try {
-  const credStr = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (!credStr) {
-    throw new Error('GOOGLE_APPLICATION_CREDENTIALS environment variable not set.');
-  }
 
-  const credentials = JSON.parse(fs.readFileSync(credStr, 'utf8')); // Correct way to read the file
+async function getGoogleCredentials() {  // New function to fetch credentials
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL,
+    process.env.SUPABASE_SERVICE_ROLE_KEY
+  );
+
+  try {
+    const { data, error } = await supabase.storage
+      .from('secret') // Your private bucket name
+      .createSignedUrl('mlb-ai-449901-72e2e38c7372.json', 60 * 60 * 24); // 24-hour expiry
+
+    if (error) {
+      throw new Error(`Error generating signed URL: ${error.message}`);
+    }
+
+    const response = await fetch(data.signedUrl);
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`Failed to fetch credentials: ${response.status} - ${errorData.error?.message || response.statusText}`);
+    }
+
+    const credentials = await response.json();
+    return credentials;
+
+  } catch (error) {
+    console.error("Error fetching Google Credentials:", error);
+    throw error; // Re-throw the error to be caught by the caller
+  }
+}
+
+try {
+  // const credStr = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  // if (!credStr) {
+  //   throw new Error('GOOGLE_APPLICATION_CREDENTIALS environment variable not set.');
+  // }
+
+  // const credentials = JSON.parse(fs.readFileSync(credStr, 'utf8')); // Correct way to read the file
+  const credentials = await getGoogleCredentials();
 
   // Create wrapper for predictions
   predictionClient = {
@@ -336,7 +368,8 @@ async function generateUserReport(user, supabase) {
     // Save report with image URL
     const report = await saveReport(user, content, imageUrl, supabase);
     console.log('Report saved with image URL:', imageUrl);
-
+    await sendEmail(user, report);
+    console.log('Email sent successfully');
     return report;
   } catch (error) {
     console.error(`Failed to generate report for user ${user.id}:`, error);
