@@ -1,11 +1,5 @@
 import { NextResponse } from 'next/server';
-// Add at the start of your API routes
-console.log('Environment check:', {
-  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-  hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-  hasGeminiKey: !!process.env.GEMINI_API_KEY
-});
+
 interface ContentItem {
   slug: string;
   content_type: string;
@@ -13,41 +7,92 @@ interface ContentItem {
   url: string;
 }
 
+interface ContentInteraction {
+  slug: string;
+  content_type: string;
+  content_headline: string;
+}
+
 async function fetchMLBContent(): Promise<ContentItem[]> {
   try {
     // Fetch the content interaction data from MLB's dataset
-    const response = await fetch('https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/mlb-fan-content-interaction-data-000000000000.json');
+    const response = await fetch(
+      'https://storage.googleapis.com/gcp-mlb-hackathon-2025/datasets/mlb-fan-content-interaction-data/mlb-fan-content-interaction-data-000000000000.json',
+      {
+        headers: {
+          'Accept-Encoding': 'gzip',
+        },
+      }
+    );
 
     if (!response.ok) {
       throw new Error(`Failed to fetch content data: ${response.status}`);
     }
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No reader available');
 
-    const text = await response.text();
-    // Parse the newline-delimited JSON
-    const items = text.trim().split('\n')
-      .map(line => JSON.parse(line))
-      .filter(item => item.content_type === 'article' || item.content_type === 'video');
+    const contentMap = new Map<string, { 
+      slug: string;
+      content_type: string;
+      headline: string;
+      interactions: number;
+    }>();
 
-    // Group by slug and count interactions
-    const contentMap = new Map();
-    items.forEach(item => {
-      const key = `${item.slug}-${item.content_type}`;
-      if (!contentMap.has(key)) {
-        contentMap.set(key, {
-          slug: item.slug,
-          content_type: item.content_type,
-          headline: item.content_headline,
-          interactions: 1
-        });
-      } else {
-        contentMap.get(key).interactions += 1;
+    let buffer = '';
+    
+    // Process the file in chunks
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      
+      // Convert the chunk to text and add to buffer
+      buffer += new TextDecoder().decode(value);
+      
+      // Process complete lines from the buffer
+      const lines = buffer.split('\n');
+      // Keep the last potentially incomplete line in the buffer
+      buffer = lines.pop() || '';
+      
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        
+        try {
+          const item = JSON.parse(line) as ContentInteraction;
+          
+          if (item.content_type !== 'article' && item.content_type !== 'video') continue;
+          
+          const key = `${item.slug}-${item.content_type}`;
+          
+          if (!contentMap.has(key)) {
+            contentMap.set(key, {
+              slug: item.slug,
+              content_type: item.content_type,
+              headline: item.content_headline,
+              interactions: 1
+            });
+          } else {
+            contentMap.get(key)!.interactions += 1;
+          }
+          
+          // Keep only top 20 items to save memory
+          if (contentMap.size > 20) {
+            const sortedEntries = Array.from(contentMap.entries())
+              .sort(([, a], [, b]) => b.interactions - a.interactions)
+              .slice(0, 10);
+            contentMap.clear();
+            sortedEntries.forEach(([k, v]) => contentMap.set(k, v));
+          }
+        } catch (e) {
+          console.error('Error parsing line:', e);
+          continue;
+        }
       }
-    });
+    }
 
-    // Convert to array and sort by interactions
+    // Convert final results to array and sort
     const sortedContent = Array.from(contentMap.values())
       .sort((a, b) => b.interactions - a.interactions)
-      .slice(0, 10) // Get top 10 most interacted content
+      .slice(0, 10)
       .map(item => ({
         slug: item.slug,
         content_type: item.content_type,
@@ -60,7 +105,6 @@ async function fetchMLBContent(): Promise<ContentItem[]> {
   } catch (error) {
     console.error('Error fetching MLB content:', error);
     
-    // Return fallback content
     return [
       {
         slug: 'mlb-live-games',
@@ -77,6 +121,7 @@ async function fetchMLBContent(): Promise<ContentItem[]> {
     ];
   }
 }
+
 
 export async function GET() {
   const content = await fetchMLBContent();
