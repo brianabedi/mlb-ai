@@ -23,7 +23,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileText, Clock } from "lucide-react";
+import { FileText, Clock, Image as ImageIcon } from "lucide-react";
 import { createClient } from '@/utils/supabase/client';
 
 interface Report {
@@ -32,6 +32,8 @@ interface Report {
   title: string;
   content: string;
   type: 'daily' | 'weekly';
+  image_url?: string | null;
+
 }
 
 export default function Reports() {
@@ -52,9 +54,13 @@ export default function Reports() {
 
         const response = await fetch('/api/reports');
         if (!response.ok) throw new Error('Failed to fetch reports');
-        
         const data = await response.json();
-        setReports(data);
+        const cleanedReports = data.map((report: Report) => ({
+          ...report,
+          content: report.content.replace(/^```html\n|```$/g, '')
+        }));
+        
+        setReports(cleanedReports);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load reports');
       } finally {
@@ -115,6 +121,8 @@ export default function Reports() {
                     <TableHead>Date</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Title</TableHead>
+                    <TableHead>Image</TableHead>
+
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -129,6 +137,11 @@ export default function Reports() {
                       </TableCell>
                       <TableCell className="capitalize">{report.type}</TableCell>
                       <TableCell>{report.title}</TableCell>
+                      <TableCell>
+                        {report.image_url ? (
+                          <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                        ) : null}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -146,8 +159,30 @@ export default function Reports() {
               {new Date(selectedReport?.created_at || '').toLocaleDateString()}
             </DialogDescription>
           </DialogHeader>
-          <ScrollArea className="h-[60vh]">
-            <div className="p-4 space-y-4" dangerouslySetInnerHTML={{ __html: selectedReport?.content || '' }} />
+          <ScrollArea className="h-[70vh]">
+            <div className="p-4 space-y-6">
+              {selectedReport?.image_url && (
+                <div className="relative w-full h-64 mb-6">
+                  <img
+                    src={selectedReport.image_url}
+                    alt="Report visualization"
+                    className="w-full h-full object-cover rounded-lg"
+                  />
+                  <a 
+                    href="https://deepmind.google/technologies/imagen-3/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="absolute bottom-2 right-2 bg-black/50 text-white px-2 py-1 rounded text-sm hover:bg-black/70 transition-colors"
+                  >
+                   AI Generated (Imagen)
+                  </a>
+                </div>
+              )}
+              <div 
+                className="prose max-w-none"
+                dangerouslySetInnerHTML={{ __html: selectedReport?.content || '' }} 
+              />
+            </div>
           </ScrollArea>
         </DialogContent>
       </Dialog>
