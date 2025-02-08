@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-
+// Add at the start of your API routes
+console.log('Environment check:', {
+  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+  hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+  hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  hasGeminiKey: !!process.env.GEMINI_API_KEY
+});
 interface ContentItem {
   slug: string;
   content_type: string;
