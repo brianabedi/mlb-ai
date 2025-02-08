@@ -2,11 +2,6 @@
     "crons": [{
       "path": "/api/cron",
       "schedule": "0 12 * * *"
-    }],
-    "env": {
-      "CRON_SECRET_KEY": "@CRON_SECRET_KEY",
-      "EMAIL_USER": "@EMAIL_USER",
-      "EMAIL_PASSWORD": "@EMAIL_PASSWORD",
-      "GEMINI_API_KEY": "@GEMINI_API_KEY"
-    }
+    }]
+    
   }
