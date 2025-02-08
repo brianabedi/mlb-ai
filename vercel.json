@@ -4,9 +4,9 @@
       "schedule": "0 12 * * *"
     }],
     "env": {
-      "CRON_SECRET_KEY": "@cron_secret_key",
-      "EMAIL_USER": "@email_user",
-      "EMAIL_PASSWORD": "@email_password",
-      "GEMINI_API_KEY": "@gemini_api_key"
+      "CRON_SECRET_KEY": "@CRON_SECRET_KEY",
+      "EMAIL_USER": "@EMAIL_USER",
+      "EMAIL_PASSWORD": "@EMAIL_PASSWORD",
+      "GEMINI_API_KEY": "@GEMINI_API_KEY"
     }
   }
