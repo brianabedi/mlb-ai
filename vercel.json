@@ -1,7 +1,9 @@
 {
-    "crons": [{
-      "path": "/api/cron",
-      "schedule": "0 12 * * *"
-    }]
-    
-  }
+  "crons": [{
+    "path": "/api/cron",
+    "schedule": "0 12 * * *",
+    "headers": {
+      "Authorization": "@CRON_SECRET_KEY"
+    }
+  }]
+}
