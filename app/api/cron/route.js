@@ -380,7 +380,7 @@ async function generateUserReport(user, supabase) {
 export async function GET(request) {
   console.log('Cron job started');
   
-  if (request.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET_KEY}`) {
+  if (request.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse('Unauthorized', { status: 401 });
   }
 
