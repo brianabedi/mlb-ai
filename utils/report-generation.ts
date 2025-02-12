@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { JWT } from 'google-auth-library';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { createClient } from '@supabase/supabase-js'
+import { User, Report } from '@/types/user';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
@@ -302,6 +303,11 @@ export async function saveReport(user: User, content: ReportContent, imageUrl: s
 
 // Email Sending
 export async function sendEmail(user: User, report: Report) {
+    if (!user.email) {
+        console.log('No email address available for user, skipping email send');
+        return;
+      }
+      
   const transporter = nodemailer.createTransport(emailConfig);
   
   try {
