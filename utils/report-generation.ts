@@ -36,8 +36,8 @@ let predictionClient: { predict: any; };
 
 async function getGoogleCredentials() {  // New function to fetch credentials
   const supabase = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
+    process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+    process.env.SUPABASE_SERVICE_ROLE_KEY|| ''
   );
 
   try {
@@ -75,7 +75,7 @@ try {
 
   // Create wrapper for predictions
   predictionClient = {
-    async predict(request) {
+    async predict(request: any) {
       try {
         // Create JWT client
         const client = new JWT({
