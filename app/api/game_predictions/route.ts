@@ -2,77 +2,7 @@
 import { NextResponse, NextRequest } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
-// import { createClient } from '@/utils/supabase/server';
 import { createClient } from '@supabase/supabase-js'
-
-// Add at the start of your API routes
-console.log('Environment check:', {
-  hasSupabaseUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-  hasAnonKey: !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-  hasGeminiKey: !!process.env.GEMINI_API_KEY
-});
-interface Game {
-  gamePk: string;
-  gameDate: string;
-  teams: {
-    home: {
-      team: {
-        id: number;
-        name: string;
-      };
-    };
-    away: {
-      team: {
-        id: number;
-        name: string;
-      };
-    };
-  };
-}
-
-interface StoredPrediction {
-  game_pk: string;
-  game_date: string;
-  predicted_winner: number;
-  home_team_id: number;
-  away_team_id: number;
-  expires_at: string;
-}
-
-interface GameWithStats {
-  gamePk: string;
-  gameDate: string;
-  homeTeam: {
-    id: number;
-    name: string;
-    stats: any[];
-  };
-  awayTeam: {
-    id: number;
-    name: string;
-    stats: any[];
-  };
-}
-
-interface Prediction {
-  gamePk: string;
-  predictedWinner: number;
-}
-
-interface FormattedPrediction {
-  gamePk: string;
-  gameDate: string;
-  homeTeam: {
-    id: number;
-    name: string;
-  };
-  awayTeam: {
-    id: number;
-    name: string;
-  };
-  predictedWinner: number;
-}
 
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
@@ -81,10 +11,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 const RETRY_AFTER = 60 * 1000; // 1 minute
 let lastApiCall = 0;
 
-const CACHE_DURATION = 600 * 60 * 1000; // 600 minutes
 const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
  
-const predictionsCache = new Map<string, { timestamp: number; prediction: any }>();
 const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
 
 const limiter = new RateLimiterMemory({
@@ -129,51 +57,6 @@ function fetchTeamName(teamId: number): string {
   return MLB_TEAMS[teamId] || `Team ${teamId}`;
 }
 
-function formatPredictions(predictions: any[], gamesWithStats: any[]): FormattedPrediction[] {
-  // Add debug logging
-  return predictions.map((prediction) => {
-    const gameInfo = gamesWithStats.find(
-      (game) => String(game.gamePk) === String(prediction.gamePk)
-    );
-
-    if (!gameInfo) {
-      console.error(`No matching game found for prediction: ${JSON.stringify(prediction)}`);
-      throw new Error(`No matching game found for gamePk: ${prediction.gamePk}`);
-    }
-
-    return {
-      gamePk: prediction.gamePk,
-      gameDate: gameInfo.gameDate,
-      homeTeam: {
-        id: gameInfo.homeTeam.id,
-        name: gameInfo.homeTeam.name
-      },
-      awayTeam: {
-        id: gameInfo.awayTeam.id,
-        name: gameInfo.awayTeam.name
-      },
-      predictedWinner: prediction.predictedWinner
-    };
-  });
-}
-
-
-  async function getStoredPredictions(supabase: any, games: any[]) {
-    const gamePks = games.map(game => game.gamePk);
-    
-    const { data: predictions, error } = await supabase
-      .from('game_predictions')
-      .select('*')
-      .in('game_pk', gamePks)
-      .gt('expires_at', new Date().toISOString());
-      
-    if (error) {
-      console.error('Error fetching predictions from Supabase:', error);
-      return [];
-    }
-    
-    return predictions;
-  }
   async function storePredictions(supabase: any, predictions: any[], gamesWithStats: any[]) {
     const now = new Date();
     const expiresAt = new Date(now.getTime() + 24 * 60 * 60 * 1000);
@@ -232,8 +115,9 @@ async function findNextGameDate() {
     try {
       const date = new Date();
       date.setDate(date.getDate() + i);
-      const formattedDate = date.toISOString().split('T')[0];
-      
+      const formattedDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000))
+      .toISOString()
+      .split('T')[0];      
       const response = await fetchWithTimeout(
         `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${formattedDate}`
       );
@@ -250,14 +134,16 @@ async function findNextGameDate() {
   throw new Error('No upcoming games found in the next 30 days');
 }
 
-async function fetchGamesForDateRange(startDate: string, days: number = 2) {
+async function fetchGamesForDateRange(startDate: string, days: number = 3) {
   const games = [];
   
   for (let i = 0; i < days; i++) {
     try {
       const date = new Date(startDate);
       date.setDate(date.getDate() + i);
-      const formattedDate = date.toISOString().split('T')[0];
+      const formattedDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000))
+      .toISOString()
+      .split('T')[0];
       
       const response = await fetchWithTimeout(
         `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${formattedDate}`

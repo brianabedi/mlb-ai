@@ -1,6 +1,6 @@
 // app/components/MainDatComponenets/PlayerRankings.tsx
 "use client"
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -34,6 +34,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Award, TrendingUp, Users, Plus, Minus } from "lucide-react"
 import { createClient } from '@/utils/supabase/client'
+import FollowEventManager from '@/utils/followEventManager';
 
 interface PitchingStats {
   earnedRunAverage: string
@@ -82,129 +83,149 @@ export default function PlayerRankings() {
   const [showLoginDialog, setShowLoginDialog] = useState(false)
   const [isAuthChecking, setIsAuthChecking] = useState(true)
 
-  useEffect(() => {
-    const fetchPlayers = async () => {
-      try {
-        const response = await fetch('/api/players')
-        if (!response.ok) {
-          throw new Error('Failed to fetch player data')
-        }
-        const data = await response.json()
-        setPlayers(data)
-        setError(null)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'An error occurred')
-      } finally {
-        setLoading(false)
+  const fetchPlayers = useCallback(async () => {
+    try {
+      const response = await fetch('/api/players');
+      if (!response.ok) {
+        throw new Error('Failed to fetch player data');
       }
+      const data = await response.json();
+      setPlayers(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
     }
+  }, []);
 
-    fetchPlayers()
-  }, [])
-
-  useEffect(() => {
-    const fetchFollowedPlayers = async () => {
-      try {
-        setIsAuthChecking(true)
-        const { data: { session } } = await supabase.auth.getSession()
+  const fetchFollowedPlayers = useCallback(async () => {
+    try {
+      setIsAuthChecking(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        const { data: follows, error: dbError } = await supabase
+          .from('player_follows')
+          .select('player_id')
+          .eq('user_id', session.user.id);
         
-        if (session?.user) {
-          const { data: follows, error: dbError } = await supabase
-            .from('player_follows')
-            .select('player_id')
-            .eq('user_id', session.user.id)
-          
-          if (dbError) throw dbError
-          if (follows) {
-            setFollowedPlayers(follows.map(f => f.player_id))
-          }
-        } else {
-          setFollowedPlayers([])
+        if (dbError) throw dbError;
+        if (follows) {
+          setFollowedPlayers(follows.map(f => f.player_id));
         }
-      } catch (err) {
-        console.error('Error fetching followed players:', err)
-        setFollowedPlayers([])
-      } finally {
-        setIsAuthChecking(false)
+      } else {
+        setFollowedPlayers([]);
       }
+    } catch (err) {
+      console.error('Error fetching followed players:', err);
+      setFollowedPlayers([]);
+    } finally {
+      setIsAuthChecking(false);
     }
+  }, [supabase]);
 
+  useEffect(() => {
+    fetchPlayers();
+  }, [fetchPlayers]);
+
+  useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user) {
-        fetchFollowedPlayers()
+        fetchFollowedPlayers();
       } else {
-        setFollowedPlayers([])
+        setFollowedPlayers([]);
       }
-    })
+    });
 
-    fetchFollowedPlayers()
+    fetchFollowedPlayers();
 
     return () => {
-      subscription.unsubscribe()
-    }
-  }, [supabase])
+      subscription.unsubscribe();
+    };
+  }, [supabase, fetchFollowedPlayers]);
 
+  useEffect(() => {
+    const unsubscribe = FollowEventManager.subscribe(() => {
+      fetchFollowedPlayers();
+    });
+  
+    return () => {
+      unsubscribe();
+    };
+  }, [fetchFollowedPlayers]);
+  
   const handleFollowToggle = async (playerId: number) => {
     try {
-      const { data: { session } } = await supabase.auth.getSession()
+      const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
-        setShowLoginDialog(true)
-        return
+        setShowLoginDialog(true);
+        return;
       }
 
       if (followedPlayers.includes(playerId)) {
-        setFollowedPlayers(followedPlayers.filter(id => id !== playerId))
+        // Optimistically update UI
+        setFollowedPlayers(followedPlayers.filter(id => id !== playerId));
         
         const { error } = await supabase
           .from('player_follows')
           .delete()
           .eq('user_id', session.user.id)
-          .eq('player_id', playerId)
+          .eq('player_id', playerId);
 
         if (error) {
-          setFollowedPlayers(prev => [...prev, playerId])
-          throw error
+          // Revert on error
+          setFollowedPlayers(prev => [...prev, playerId]);
+          throw error;
         }
+        
+        // Notify other components about the change
+        FollowEventManager.notify();
       } else {
-        setFollowedPlayers(prev => [...prev, playerId])
+        // Optimistically update UI
+        setFollowedPlayers(prev => [...prev, playerId]);
         
         const { error } = await supabase
           .from('player_follows')
           .insert([
             { user_id: session.user.id, player_id: playerId }
           ])
-          .select()
+          .select();
 
         if (error) {
-          setFollowedPlayers(prev => prev.filter(id => id !== playerId))
-          throw error
+          // Revert on error
+          setFollowedPlayers(prev => prev.filter(id => id !== playerId));
+          throw error;
         }
+        
+        // Notify other components about the change
+        FollowEventManager.notify();
       }
     } catch (err) {
-      console.error('Error toggling player follow:', err)
+      console.error('Error toggling player follow:', err);
     }
-  }
+  };
 
   const sortedPlayers = [...players].sort((a, b) => {
     switch (sortBy) {
       case 'followers':
-        return b.followers - a.followers
+        return b.followers - a.followers;
       case 'homeRuns':
-        return (b.battingStats?.homeRuns ?? 0) - (a.battingStats?.homeRuns ?? 0)
+        return (b.battingStats?.homeRuns ?? 0) - (a.battingStats?.homeRuns ?? 0);
       case 'battingAverage':
-        return parseFloat(b.battingStats?.battingAverage ?? '0') - parseFloat(a.battingStats?.battingAverage ?? '0')
+        return parseFloat(b.battingStats?.battingAverage ?? '0') - parseFloat(a.battingStats?.battingAverage ?? '0');
       case 'era':
-        return parseFloat(a.pitchingStats?.earnedRunAverage ?? '999') - parseFloat(b.pitchingStats?.earnedRunAverage ?? '999')
+        return parseFloat(a.pitchingStats?.earnedRunAverage ?? '999') - parseFloat(b.pitchingStats?.earnedRunAverage ?? '999');
       case 'strikeouts':
-        return (b.pitchingStats?.strikeouts ?? 0) - (a.pitchingStats?.strikeouts ?? 0)
+        return (b.pitchingStats?.strikeouts ?? 0) - (a.pitchingStats?.strikeouts ?? 0);
       case 'wins':
-        return (b.pitchingStats?.wins ?? 0) - (a.pitchingStats?.wins ?? 0)
+        return (b.pitchingStats?.wins ?? 0) - (a.pitchingStats?.wins ?? 0);
       default:
-        return 0
+        return 0;
     }
-  })
+  });
 
   if (loading) {
     return (
@@ -240,6 +261,7 @@ export default function PlayerRankings() {
               Please log in to follow players and receive updates about their performance.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          
           <AlertDialogFooter>
             <AlertDialogCancel>Close</AlertDialogCancel>
             {/* <AlertDialogAction onClick={() => window.location.href = '/login'}>

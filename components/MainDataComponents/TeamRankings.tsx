@@ -1,5 +1,5 @@
 "use client"
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Plus, Minus, Check } from "lucide-react";
 import {
   Card,
@@ -27,6 +27,18 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { createClient } from '@/utils/supabase/client';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import FollowEventManager from '@/utils/followEventManager';
 
 interface Team {
   id: number;
@@ -52,53 +64,56 @@ export default function TeamRankings() {
   const [sortBy, setSortBy] = useState<SortField>('winningPercentage');
   const [supabase] = useState(() => createClient());
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  useEffect(() => {
-    const fetchTeams = async () => {
-      try {
-        const response = await fetch('/api/teams');
-        if (!response.ok) {
-          throw new Error('Failed to fetch team data');
-        }
-        const data: Team[] = await response.json();
-        setTeams(data);
-        setError(null);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load teams');
-      } finally {
-        setLoading(false);
-      }
-    };
+  const [showLoginDialog, setShowLoginDialog] = useState(false);
 
-    fetchTeams();
+
+  const fetchTeams = useCallback(async () => {
+    try {
+      const response = await fetch('/api/teams');
+      if (!response.ok) {
+        throw new Error('Failed to fetch team data');
+      }
+      const data: Team[] = await response.json();
+      setTeams(data);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load teams');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    const fetchFollowedTeams = async () => {
-      try {
-        setIsAuthChecking(true);
-        const { data: { session } } = await supabase.auth.getSession();
+  const fetchFollowedTeams = useCallback(async () => {
+    try {
+      setIsAuthChecking(true);
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        const { data: follows, error: dbError } = await supabase
+          .from('team_follows')
+          .select('team_id')
+          .eq('user_id', session.user.id);
         
-        if (session?.user) {
-          const { data: follows, error: dbError } = await supabase
-            .from('team_follows')
-            .select('team_id')
-            .eq('user_id', session.user.id);
-          
-          if (dbError) throw dbError;
-          if (follows) {
-            setFollowedTeams(follows.map(f => f.team_id));
-          }
-        } else {
-          setFollowedTeams([]);
+        if (dbError) throw dbError;
+        if (follows) {
+          setFollowedTeams(follows.map(f => f.team_id));
         }
-      } catch (err) {
-        console.error('Error fetching followed teams:', err);
+      } else {
         setFollowedTeams([]);
-      } finally {
-        setIsAuthChecking(false);
       }
-    };
+    } catch (err) {
+      console.error('Error fetching followed teams:', err);
+      setFollowedTeams([]);
+    } finally {
+      setIsAuthChecking(false);
+    }
+  }, [supabase]);
 
+  useEffect(() => {
+    fetchTeams();
+  }, [fetchTeams]);
+
+  useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -114,18 +129,28 @@ export default function TeamRankings() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, fetchFollowedTeams]);
+
+  useEffect(() => {
+    const unsubscribe = FollowEventManager.subscribe(() => {
+      fetchFollowedTeams();
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, [fetchFollowedTeams]);
 
   const handleFollowToggle = async (teamId: number) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
-        // You might want to show a login dialog here
-        console.error('User must be logged in to follow teams');
+        setShowLoginDialog(true);
         return;
       }
 
       if (followedTeams.includes(teamId)) {
+        // Optimistic update
         setFollowedTeams(followedTeams.filter(id => id !== teamId));
         
         const { error } = await supabase
@@ -135,10 +160,15 @@ export default function TeamRankings() {
           .eq('team_id', teamId);
 
         if (error) {
+          // Revert on error
           setFollowedTeams(prev => [...prev, teamId]);
           throw error;
         }
+        
+        // Notify other components about the change
+        FollowEventManager.notify();
       } else {
+        // Optimistic update
         setFollowedTeams(prev => [...prev, teamId]);
         
         const { error } = await supabase
@@ -149,9 +179,13 @@ export default function TeamRankings() {
           .select();
 
         if (error) {
+          // Revert on error
           setFollowedTeams(prev => prev.filter(id => id !== teamId));
           throw error;
         }
+        
+        // Notify other components about the change
+        FollowEventManager.notify();
       }
     } catch (err) {
       console.error('Error toggling team follow:', err);
@@ -205,6 +239,21 @@ export default function TeamRankings() {
   }
 
   return (
+    <>
+       <AlertDialog open={showLoginDialog} onOpenChange={setShowLoginDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Login Required</AlertDialogTitle>
+            <AlertDialogDescription>
+              Please log in to follow teams and receive updates about their performance.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Close</AlertDialogCancel>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     <Card className="w-full mt-4">
       <CardHeader>
         <CardTitle>Team Rankings</CardTitle>
@@ -294,6 +343,6 @@ export default function TeamRankings() {
           Total Teams: {filteredTeams.length}
         </p>
       </CardFooter>
-    </Card>
+    </Card></>
   );
 }

@@ -1,5 +1,5 @@
 "use client"
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card,
   CardContent,
@@ -19,8 +19,10 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { Star } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Star, Minus } from "lucide-react";
 import { createClient } from '@/utils/supabase/client';
+import FollowEventManager from '@/utils/followEventManager';
 
 interface Team {
   id: number;
@@ -53,74 +55,146 @@ interface Player {
 export default function Following() {
   const [followedTeams, setFollowedTeams] = useState<Team[]>([]);
   const [followedPlayers, setFollowedPlayers] = useState<Player[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [isLoggedIn, setIsLoggedIn] = useState(false);
-  const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [isInitialAuthChecking, setIsInitialAuthChecking] = useState(true);
   const [supabase] = useState(() => createClient());
 
-  useEffect(() => {
-    const fetchFollowedItems = async () => {
-      try {
-        setIsAuthChecking(true);
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        if (session?.user) {
-          setIsLoggedIn(true);
-          setLoading(true);
+  const handleUnfollow = async (type: 'team' | 'player', id: number) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.user) return;
 
-          // Fetch followed teams
-          const { data: teamFollows } = await supabase
+      setLoading(true);
+      
+      const tableName = type === 'team' ? 'team_follows' : 'player_follows';
+      const idField = type === 'team' ? 'team_id' : 'player_id';
+      
+      // Optimistically update UI
+      if (type === 'team') {
+        setFollowedTeams(prev => prev.filter(team => team.id !== id));
+      } else {
+        setFollowedPlayers(prev => prev.filter(player => player.id !== id));
+      }
+
+      const { error } = await supabase
+        .from(tableName)
+        .delete()
+        .eq('user_id', session.user.id)
+        .eq(idField, id);
+
+      if (error) {
+        // Revert on error
+        if (type === 'team') {
+          const team = followedTeams.find(t => t.id === id);
+          if (team) setFollowedTeams(prev => [...prev, team]);
+        } else {
+          const player = followedPlayers.find(p => p.id === id);
+          if (player) setFollowedPlayers(prev => [...prev, player]);
+        }
+        throw error;
+      }
+
+      // Notify other components about the change
+      FollowEventManager.notify();
+    } catch (err) {
+      console.error(`Error unfollowing ${type}:`, err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchFollowedItems = useCallback(async () => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        setIsLoggedIn(true);
+        setLoading(true);
+
+        // Fetch teams and players in parallel
+        const [teamFollowsResponse, playerFollowsResponse] = await Promise.all([
+          supabase
             .from('team_follows')
             .select('team_id')
-            .eq('user_id', session.user.id);
-
-          if (teamFollows) {
-            const teamIds = teamFollows.map(f => f.team_id);
-            const teamsResponse = await fetch('/api/teams');
-            const allTeams = await teamsResponse.json();
-            const followedTeamsData = allTeams.filter((team: Team) => 
-              teamIds.includes(team.id)
-            );
-            setFollowedTeams(followedTeamsData);
-          }
-
-          // Fetch followed players
-          const { data: playerFollows } = await supabase
+            .eq('user_id', session.user.id),
+          supabase
             .from('player_follows')
             .select('player_id')
-            .eq('user_id', session.user.id);
+            .eq('user_id', session.user.id)
+        ]);
 
-          if (playerFollows) {
-            const playerIds = playerFollows.map(f => f.player_id);
-            const playersResponse = await fetch('/api/players');
-            const allPlayers = await playersResponse.json();
-            const followedPlayersData = allPlayers.filter((player: Player) => 
-              playerIds.includes(player.id)
-            );
-            setFollowedPlayers(followedPlayersData);
-          }
-        } else {
-          setIsLoggedIn(false);
-          setFollowedTeams([]);
-          setFollowedPlayers([]);
+        const [teamsResponse, playersResponse] = await Promise.all([
+          fetch('/api/teams'),
+          fetch('/api/players')
+        ]);
+
+        const [allTeams, allPlayers] = await Promise.all([
+          teamsResponse.json(),
+          playersResponse.json()
+        ]);
+
+        if (teamFollowsResponse.data) {
+          const teamIds = teamFollowsResponse.data.map(f => f.team_id);
+          const followedTeamsData = allTeams.filter((team: Team) => 
+            teamIds.includes(team.id)
+          );
+          setFollowedTeams(followedTeamsData);
         }
-      } catch (err) {
-        console.error('Error fetching followed items:', err);
+
+        if (playerFollowsResponse.data) {
+          const playerIds = playerFollowsResponse.data.map(f => f.player_id);
+          const followedPlayersData = allPlayers.filter((player: Player) => 
+            playerIds.includes(player.id)
+          );
+          setFollowedPlayers(followedPlayersData);
+        }
+      } else {
+        setIsLoggedIn(false);
+        setFollowedTeams([]);
+        setFollowedPlayers([]);
+      }
+    } catch (err) {
+      console.error('Error fetching followed items:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, [supabase]);
+
+  // Initial auth check
+  useEffect(() => {
+    const checkInitialAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsLoggedIn(!!session);
+        if (session) {
+          await fetchFollowedItems();
+        }
       } finally {
-        setLoading(false);
-        setIsAuthChecking(false);
+        setIsInitialAuthChecking(false);
       }
     };
 
-    fetchFollowedItems();
+    checkInitialAuth();
+  }, [supabase, fetchFollowedItems]);
 
+  // Subscribe to follow/unfollow events
+  useEffect(() => {
+    const unsubscribe = FollowEventManager.subscribe(() => {
+      fetchFollowedItems();
+    });
+    return () => unsubscribe();
+  }, [fetchFollowedItems]);
+
+  // Handle auth state changes
+  useEffect(() => {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user) {
+      setIsLoggedIn(!!session);
+      if (session) {
         fetchFollowedItems();
       } else {
-        setIsLoggedIn(false);
         setFollowedTeams([]);
         setFollowedPlayers([]);
       }
@@ -129,9 +203,9 @@ export default function Following() {
     return () => {
       subscription.unsubscribe();
     };
-  }, [supabase]);
+  }, [supabase, fetchFollowedItems]);
 
-  if (isAuthChecking) {
+  if (isInitialAuthChecking) {
     return (
       <Card className="w-full">
         <CardContent className="flex items-center justify-center h-32">
@@ -143,7 +217,7 @@ export default function Following() {
 
   if (!isLoggedIn) {
     return (
-      <Card className="w-full mt-4">
+      <Card className="w-full">
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Star className="h-6 w-6" />
@@ -153,22 +227,6 @@ export default function Following() {
         </CardHeader>
         <CardContent className="flex items-center justify-center h-32">
           <p className="text-muted-foreground">Please log in to see your followed teams and players</p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (loading) {
-    return (
-      <Card className="w-full">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Star className="h-6 w-6" />
-            Following
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="flex items-center justify-center h-32">
-          <p className="text-muted-foreground">Loading...</p>
         </CardContent>
       </Card>
     );
@@ -204,6 +262,7 @@ export default function Following() {
                       <TableHead className="text-right">W</TableHead>
                       <TableHead className="text-right">L</TableHead>
                       <TableHead className="text-right">PCT</TableHead>
+                      <TableHead className="text-right">Unfollow </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -224,6 +283,16 @@ export default function Following() {
                         <TableCell className="text-right">
                           {(team.winningPercentage * 100).toFixed(1)}%
                         </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleUnfollow('team', team.id)}
+                            disabled={loading}
+                          >
+                            <Minus className="h-4 w-4 text-red-400" />
+                          </Button>
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -238,13 +307,14 @@ export default function Following() {
                 You haven't followed any players yet
               </div>
             ) : (
-              <div className="rounded-md border ">
-                <Table  >
+              <div className="rounded-md border">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Player</TableHead>
                       <TableHead>Team</TableHead>
                       <TableHead className="text-right">Stats</TableHead>
+                      <TableHead className="text-right">Unfollow </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -255,6 +325,8 @@ export default function Following() {
                             <Avatar className="h-8 w-8">
                               <AvatarImage
                                 src={`https://securea.mlb.com/mlb/images/players/head_shot/${player.id}.jpg`}
+                                className="object-cover" 
+
                                 alt={player.nameFirstLast}
                               />
                               <AvatarFallback>
@@ -287,6 +359,16 @@ export default function Following() {
                               {player.pitchingStats.earnedRunAverage} ERA, {player.pitchingStats.wins}-{player.pitchingStats.losses}
                             </span>
                           ) : '-'}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleUnfollow('player', player.id)}
+                            disabled={loading}
+                          >
+                            <Minus className="h-4 w-4 text-red-400" />
+                          </Button>
                         </TableCell>
                       </TableRow>
                     ))}

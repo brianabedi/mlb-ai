@@ -1,3 +1,4 @@
+// Reports.tsx
 "use client"
 import React, { useState, useEffect } from 'react';
 import {
@@ -6,7 +7,9 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  CardFooter,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -23,8 +26,9 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { FileText, Clock, Image as ImageIcon } from "lucide-react";
+import { FileText, Clock, Image as ImageIcon, Loader2 } from "lucide-react";
 import { createClient } from '@/utils/supabase/client';
+import { useToast } from "@/hooks/use-toast"
 
 interface Report {
   id: string;
@@ -33,43 +37,83 @@ interface Report {
   content: string;
   type: 'daily' | 'weekly';
   image_url?: string | null;
-
 }
 
 export default function Reports() {
   const [reports, setReports] = useState<Report[]>([]);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [supabase] = useState(() => createClient());
+  const { toast } = useToast();
+
+  const fetchReports = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        setError('Please login to view reports');
+        return;
+      }
+
+      const response = await fetch('/api/reports');
+      if (!response.ok) throw new Error('Failed to fetch reports');
+      const data = await response.json();
+      const cleanedReports = data.map((report: Report) => ({
+        ...report,
+        content: report.content.replace(/^```html\n|```$/g, '')
+      }));
+      
+      setReports(cleanedReports);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load reports');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchReports = async () => {
-      try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          setError('Please login to view reports');
-          return;
-        }
-
-        const response = await fetch('/api/reports');
-        if (!response.ok) throw new Error('Failed to fetch reports');
-        const data = await response.json();
-        const cleanedReports = data.map((report: Report) => ({
-          ...report,
-          content: report.content.replace(/^```html\n|```$/g, '')
-        }));
-        
-        setReports(cleanedReports);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load reports');
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchReports();
   }, [supabase]);
+
+  const handleGenerateReport = async () => {
+    setGenerating(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error('Please login to generate a report');
+      }
+      const response = await fetch('/api/generate-report', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        credentials: 'include',
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to generate report');
+      }
+
+      toast({
+        title: "Success",
+        description: "New report generated successfully!",
+      });
+
+      // Refresh the reports list
+      await fetchReports();
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : 'Failed to generate report',
+        variant: "destructive",
+      });
+    } finally {
+      setGenerating(false);
+    }
+  };
 
   if (!loading && error) {
     return (
@@ -77,9 +121,9 @@ export default function Reports() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-6 w-6" />
-            Reports
+            AI Reports
           </CardTitle>
-          <CardDescription>Daily and weekly performance reports</CardDescription>
+          <CardDescription>Daily and on-demand performance reports</CardDescription>
         </CardHeader>
         <CardContent className="flex items-center justify-center h-32">
           <p className="text-muted-foreground">{error}</p>
@@ -106,15 +150,15 @@ export default function Reports() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <FileText className="h-6 w-6" />
-            Reports
+            AI Reports
           </CardTitle>
-          <CardDescription>Daily and weekly performance reports</CardDescription>
+          <CardDescription>Daily and on-demand AI performance reports on followed teams and players </CardDescription>
         </CardHeader>
         <CardContent>
           {reports.length === 0 ? (
             <EmptyState />
           ) : (
-            <ScrollArea className="h-[400px] rounded-md border">
+            <ScrollArea className="h-[200px] rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -122,7 +166,6 @@ export default function Reports() {
                     <TableHead>Type</TableHead>
                     <TableHead>Title</TableHead>
                     <TableHead>Image</TableHead>
-
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -149,6 +192,25 @@ export default function Reports() {
             </ScrollArea>
           )}
         </CardContent>
+        <CardFooter className="flex justify-end">
+          <Button 
+            onClick={handleGenerateReport} 
+            disabled={generating}
+            className='flex mx-auto'
+          >
+            {generating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : (
+              <>
+                <FileText className="mr-2 h-4 w-4" />
+                Generate Report
+              </>
+            )}
+          </Button>
+        </CardFooter>
       </Card>
 
       <Dialog open={!!selectedReport} onOpenChange={() => setSelectedReport(null)}>

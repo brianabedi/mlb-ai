@@ -130,14 +130,14 @@ const AuthPopover = () => {
         {user ? (
           <div className="grid gap-4">
             <div className="flex items-center gap-3 pb-3 border-b">
-              <UserCircle className="h-10 w-10" />
+              <UserCircle className="h-6 w-6" />
               <div className="flex flex-col">
                 <span className="font-medium">{user.email}</span>
-                <span className="text-sm text-gray-500">Account Settings</span>
+                {/* <span className="text-sm text-gray-500">Account Settings</span> */}
               </div>
             </div>
             
-            <div className="space-y-1">
+            {/* <div className="space-y-1">
               <Button variant="ghost" className="w-full justify-start gap-2">
                 <Settings className="h-4 w-4" />
                 Settings
@@ -146,9 +146,9 @@ const AuthPopover = () => {
                 <History className="h-4 w-4" />
                 Activity History
               </Button>
-            </div>
+            </div> */}
             
-            <div className="pt-2 border-t">
+            <div className="pt-2  ">
               <Button 
                 variant="ghost" 
                 className="w-full justify-start gap-2 text-red-600 hover:text-red-600 hover:bg-red-50"
@@ -191,7 +191,7 @@ const AuthPopover = () => {
               </div>
             </div>
             <Button 
-              className="w-full bg-black text-white font-bold"
+              className=" m-auto bg-black text-white font-bold "
               onClick={handleAuth}
               disabled={isLoading}
             >

@@ -3,13 +3,11 @@ import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import nodemailer from 'nodemailer';
 import { createClient } from '@supabase/supabase-js'
-import { PredictionServiceClient } from '@google-cloud/aiplatform';
 import { v4 as uuidv4 } from 'uuid'; 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
-import { GoogleAuth } from 'google-auth-library';
 import { JWT } from 'google-auth-library';
-// console.log("GOOGLE_APPLICATION_CREDENTIALS:", process.env.GOOGLE_APPLICATION_CREDENTIALS);
-import fs from 'fs';
+
+export const maxDuration = 60; 
 
 const emailConfig = {
   host: 'smtp.porkbun.com',
@@ -336,7 +334,7 @@ async function sendEmail(user, report) {
     throw new Error(`Email sending failed: ${error.message}`);
   }
 }
-async function generateUserReport(user, supabase) {
+export async function generateUserReport(user, supabase, storageClient ) {
   try {
     const follows = await fetchUserFollows(user, supabase);
     console.log(`Generating report for user ${user.id} with follows:`, follows);
@@ -355,7 +353,9 @@ async function generateUserReport(user, supabase) {
         console.log('Image generated successfully:', !!imageBase64);
         
         if (imageBase64) {
-          imageUrl = await uploadImageToSupabase(imageBase64, supabase);
+          const clientToUse = storageClient || supabase;
+
+          imageUrl = await uploadImageToSupabase(imageBase64, clientToUse);
           console.log('Image uploaded to Supabase, URL:', imageUrl);
         }
       } catch (imageError) {
@@ -379,6 +379,8 @@ async function generateUserReport(user, supabase) {
 
 export async function GET(request) {
   console.log('Cron job started');
+  console.log('cron secret', process.env.CRON_SECRET)
+  console.log('request headers', request.headers.get('Authorization'))
   
   if (request.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
     return new NextResponse('Unauthorized', { status: 401 });

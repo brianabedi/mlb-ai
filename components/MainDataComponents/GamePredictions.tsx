@@ -25,6 +25,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { TrendingUpDown } from "lucide-react";
 
 interface Prediction {
   gamePk: string;
@@ -114,20 +115,28 @@ export default function GamePredictions() {
   if (loading) {
     return (
       <Card className="w-full  ">
-        <CardHeader>
-          <CardTitle>Game Predictions</CardTitle>
-          <CardDescription>Loading predictions...</CardDescription>
-        </CardHeader>
+            <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+           <TrendingUpDown className="h-6 w-6" />
+AI Game Predictions</CardTitle>
+        <CardDescription>AI powered predictions for upcoming games</CardDescription>
+      </CardHeader>
+        <CardContent className="flex items-center justify-center">
+          <div className="w-8 h-8 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
+        </CardContent>
+
       </Card>
     );
   }
   if (error) {
     return (
       <Card className="w-full">
-        <CardHeader>
-          <CardTitle>Game Predictions</CardTitle>
-          <CardDescription className="text-red-500">{error}</CardDescription>
-        </CardHeader>
+             <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+           <TrendingUpDown className="h-6 w-6" />
+AI Game Predictions</CardTitle>
+        <CardDescription>AI powered predictions for upcoming games</CardDescription>
+      </CardHeader>
         <CardFooter>
           <Button 
             variant="outline" 
@@ -145,10 +154,12 @@ export default function GamePredictions() {
   if (predictions.length === 0) {
     return (
       <Card className="w-full">
-        <CardHeader>
-          <CardTitle>Game Predictions</CardTitle>
-          <CardDescription>No predictions available at this time. Check back later.</CardDescription>
-        </CardHeader>
+           <CardHeader>
+      <CardTitle className="flex items-center gap-2">
+           <TrendingUpDown className="h-6 w-6" />
+AI Game Predictions</CardTitle>
+        <CardDescription>AI powered predictions for upcoming games</CardDescription>
+      </CardHeader>
         <CardFooter>
           <Button 
             variant="outline" 
@@ -166,8 +177,10 @@ export default function GamePredictions() {
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle>Game Predictions</CardTitle>
-        <CardDescription>AI-powered predictions for upcoming games</CardDescription>
+      <CardTitle className="flex items-center gap-2">
+           <TrendingUpDown className="h-6 w-6" />
+AI Game Predictions</CardTitle>
+        <CardDescription>AI powered predictions for upcoming games</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="mb-6">
@@ -181,7 +194,7 @@ export default function GamePredictions() {
             <SelectContent>
               {uniqueDates.map(date => (
                 <SelectItem key={date} value={date}>
-                  {new Date(date).toLocaleDateString('en-US', {
+                  {new Date(date + 'T12:00:00').toLocaleDateString('en-US', {
                     weekday: 'short',
                     month: 'short',
                     day: 'numeric'
@@ -196,19 +209,19 @@ export default function GamePredictions() {
           opts={{
             align: "start",
           }}
-          className="w-full px-2"
+          className="w-full px-8 "
         >
           <CarouselContent>
             {filteredPredictions.map((prediction, index) => (
-              <CarouselItem key={index} className="md:basis-1/2 lg:basis-1/2">
-                <div className="p-1">
+              <CarouselItem key={index} className="md:basis-1/2">
+                <div className=" ">
                   <Card>
-                    <CardContent className="flex items-center justify-between p-6">
+                    <CardContent className="flex items-center justify-between p-4">
                       <div className="flex flex-col items-center space-y-2">
                         <img
                           src={`https://www.mlbstatic.com/team-logos/${prediction.awayTeam.id}.svg`}
                           alt={prediction.awayTeam.name}
-                          className="w-16 h-16"
+                          className="md:w-16 md:h-16 w-8 h-8"
                         />
                         <span className="text-sm font-medium">{prediction.awayTeam.name}</span>
                         {prediction.predictedWinner === prediction.awayTeam.id && (
@@ -223,7 +236,7 @@ export default function GamePredictions() {
                         <img
                           src={`https://www.mlbstatic.com/team-logos/${prediction.homeTeam.id}.svg`}
                           alt={prediction.homeTeam.name}
-                          className="w-16 h-16"
+                          className="md:w-16 md:h-16 w-8 h-8"
                         />
                         <span className="text-sm font-medium">{prediction.homeTeam.name}</span>
                         {prediction.predictedWinner === prediction.homeTeam.id && (
@@ -243,7 +256,7 @@ export default function GamePredictions() {
           <CarouselNext className="mr-6" />
         </Carousel>
       </CardContent>
-      <CardFooter className="flex justify-between">
+      {/* <CardFooter className="flex justify-between">
         <Button 
           variant="outline" 
           className="w-100 m-auto" 
@@ -252,7 +265,7 @@ export default function GamePredictions() {
         >
           Refresh Predictions
         </Button>
-      </CardFooter>
+      </CardFooter> */}
     </Card>
   );
 }
