@@ -1,18 +1,17 @@
-// app/api/cron/route.ts
-import { NextResponse } from 'next/server';
+// app/utils/report-generation.ts
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import nodemailer from 'nodemailer';
-import { createClient } from '@supabase/supabase-js'
-import { v4 as uuidv4 } from 'uuid'; 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+import { v4 as uuidv4 } from 'uuid';
 import { JWT } from 'google-auth-library';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { createClient } from '@supabase/supabase-js'
 
-export const maxDuration = 60; 
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 const emailConfig = {
   host: 'smtp.porkbun.com',
-  port: 587,   
-  secure: false,  
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASSWORD,
@@ -22,8 +21,29 @@ const emailConfig = {
   }
 };
 
+// Types
+interface User {
+  id: string;
+  email: string;
+}
 
-let predictionClient;
+interface Report {
+  title: string;
+  content: string;
+  image_url?: string | null;
+}
+
+interface ReportContent {
+  reportText: string;
+  imagePrompt: string;
+}
+
+interface Follows {
+  teamFollows: Array<{ team_id: string }>;
+  playerFollows: Array<{ player_id: string }>;
+}
+
+let predictionClient: { predict: any; };
 
 async function getGoogleCredentials() {  // New function to fetch credentials
   const supabase = createClient(
@@ -124,11 +144,10 @@ try {
   throw error;
 }
 
-const dbConfig = {
-  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
-  supabaseKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
-};
-async function generateImage(prompt) {
+
+
+// Image Generation
+export async function generateImage(prompt: string) {
   try {
     console.log('Starting image generation with prompt length:', prompt.length);
     
@@ -141,28 +160,23 @@ async function generateImage(prompt) {
         mimeType: 'image/png'
       },
     };
-
-    console.log('Request configuration:', JSON.stringify(request, null, 2));
    
     const [response] = await predictionClient.predict(request);
-    console.log('Response received, has predictions:', !!response?.predictions);
 
     if (response?.predictions?.[0]?.bytesBase64Encoded) {
       return response.predictions[0].bytesBase64Encoded;
     } else {
       console.warn("No valid base64 image data in response");
-      console.log("Full API Response:", JSON.stringify(response, null, 2));
       return null;
     }
-
   } catch (error) {
     console.error('Image generation failed:', error);
     throw error;
   }
 }
 
-// Fix for uploadImageToSupabase function
-async function uploadImageToSupabase(imageBase64, supabase) {
+// Supabase Storage Upload
+export async function uploadImageToSupabase(imageBase64: string, supabase: SupabaseClient) {
   if (!imageBase64) {
     console.log('No image data provided for upload');
     return null;
@@ -171,12 +185,6 @@ async function uploadImageToSupabase(imageBase64, supabase) {
   try {
     const imageBuffer = Buffer.from(imageBase64, 'base64');
     const fileName = `report-images/${uuidv4()}.png`;
-
-    console.log('Attempting to upload image:', {
-      bufferSize: imageBuffer.length,
-      fileName,
-      bucket: 'reports'
-    });
 
     const { data, error } = await supabase
       .storage
@@ -192,33 +200,33 @@ async function uploadImageToSupabase(imageBase64, supabase) {
       return null;
     }
 
-    // Immediately get the public URL after successful upload
     const { data: { publicUrl } } = supabase
       .storage
       .from('reports')
       .getPublicUrl(fileName);
 
-    console.log('Successfully uploaded image, public URL:', publicUrl);
     return publicUrl;
-
   } catch (error) {
     console.error('Failed to upload image:', error);
     return null;
   }
 }
 
-
-async function fetchUserFollows(user, supabase) {
+// User Data Fetching
+export async function fetchUserFollows(user: User, supabase: SupabaseClient): Promise<Follows> {
   const [{ data: teamFollows }, { data: playerFollows }] = await Promise.all([
     supabase.from('team_follows').select('team_id').eq('user_id', user.id),
     supabase.from('player_follows').select('player_id').eq('user_id', user.id)
   ]);
   
-  return { teamFollows, playerFollows };
+  return { 
+    teamFollows: teamFollows || [], 
+    playerFollows: playerFollows || [] 
+  };
 }
 
-
-async function generateReportContent(follows) {
+// Report Content Generation
+export async function generateReportContent(follows: Follows): Promise<ReportContent> {
   const model = genAI.getGenerativeModel({ model: "gemini-pro" });
    
   const prompt = `Create an engaging MLB performance report with the following structure and style:
@@ -261,24 +269,20 @@ Format the response in HTML with appropriate tags for styling. Use <h1>, <h2>, <
   const result = await model.generateContent(prompt);
   const reportText = await result.response.text();
 
-  // Generate an image prompt based on the key storyline
   const imagePromptResult = await model.generateContent(`Based on this baseball report: ${reportText}
   Create a short, specific, detailed prompt (maximum 50 words) for an image that would best represent the main storyline or most exciting moment described in the report. Focus on action, emotion, and specific details. Make it vivid and clear. Do not include any real player or team names in the prompt.`);
   
   const imagePrompt = await imagePromptResult.response.text();
-   
-  
 
   return { reportText, imagePrompt };
 }
 
-async function saveReport(user, content, imageUrl, supabase) {
-  console.log('Saving report with image URL:', imageUrl);
-  
+// Report Saving
+export async function saveReport(user: User, content: ReportContent, imageUrl: string | null, supabase: SupabaseClient) {
   const report = {
     user_id: user.id,
     content: content.reportText,
-    image_url: imageUrl, // This will now correctly store the public URL
+    image_url: imageUrl,
     type: 'daily',
     title: `MLB Daily Insider Report - ${new Date().toLocaleDateString()}`
   };
@@ -290,15 +294,14 @@ async function saveReport(user, content, imageUrl, supabase) {
     .single();
 
   if (error) {
-    console.error('Failed to save report:', error);
     throw new Error(`Failed to save report: ${error.message}`);
   }
 
-  console.log('Report saved successfully:', data);
   return data;
 }
 
-async function sendEmail(user, report) {
+// Email Sending
+export async function sendEmail(user: User, report: Report) {
   const transporter = nodemailer.createTransport(emailConfig);
   
   try {
@@ -334,7 +337,9 @@ async function sendEmail(user, report) {
     throw new Error(`Email sending failed: ${error.message}`);
   }
 }
-export async function generateUserReport(user, supabase, storageClient ) {
+
+// Main Report Generation Function
+export async function generateUserReport(user: User, supabase: SupabaseClient, storageClient: SupabaseClient | null) {
   try {
     const follows = await fetchUserFollows(user, supabase);
     console.log(`Generating report for user ${user.id} with follows:`, follows);
@@ -349,14 +354,13 @@ export async function generateUserReport(user, supabase, storageClient ) {
 
     if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
       try {
+        // const credentials = await getGoogleCredentials(supabase);
+        // const predictionClient = await initPredictionClient(credentials);
         const imageBase64 = await generateImage(content.imagePrompt);
-        console.log('Image generated successfully:', !!imageBase64);
         
         if (imageBase64) {
           const clientToUse = storageClient || supabase;
-
           imageUrl = await uploadImageToSupabase(imageBase64, clientToUse);
-          console.log('Image uploaded to Supabase, URL:', imageUrl);
         }
       } catch (imageError) {
         console.error('Image generation/upload failed:', imageError);
@@ -365,47 +369,11 @@ export async function generateUserReport(user, supabase, storageClient ) {
       console.log('Skipping image generation due to missing credentials');
     }
 
-    // Save report with image URL
     const report = await saveReport(user, content, imageUrl, supabase);
-    console.log('Report saved with image URL:', imageUrl);
     await sendEmail(user, report);
-    console.log('Email sent successfully');
     return report;
   } catch (error) {
     console.error(`Failed to generate report for user ${user.id}:`, error);
     return null;
-  }
-}
-
-export async function GET(request) {
-  console.log('Cron job started');
-  console.log('cron secret', process.env.CRON_SECRET)
-  console.log('request headers', request.headers.get('Authorization'))
-  
-  if (request.headers.get('Authorization') !== `Bearer ${process.env.CRON_SECRET}`) {
-    return new NextResponse('Unauthorized', { status: 401 });
-  }
-
-  const supabase = createClient(dbConfig.supabaseUrl, dbConfig.supabaseKey);
-
-  try {
-    const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
-    if (userError) throw new Error(`Failed to fetch users: ${userError.message}`);
-
-    const reports = await Promise.all(
-      users.map(user => generateUserReport(user, supabase))
-    );
-
-    return NextResponse.json({
-      success: true,
-      reportsGenerated: reports.filter(Boolean).length,
-      totalUsers: users.length
-    });
-  } catch (error) {
-    console.error('Cron job failed:', error);
-    return NextResponse.json({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
-    }, { status: 500 });
   }
 }
