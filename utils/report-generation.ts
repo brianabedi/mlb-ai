@@ -339,8 +339,8 @@ export async function sendEmail(user: User, report: Report) {
 }
 
 // Main Report Generation Function
-export async function generateUserReport(user: User, supabase: SupabaseClient, storageClient: SupabaseClient | null) {
-  try {
+export async function generateUserReport(user: User, supabase: SupabaseClient, storageClient?: SupabaseClient | null) {
+    try {
     const follows = await fetchUserFollows(user, supabase);
     console.log(`Generating report for user ${user.id} with follows:`, follows);
     
