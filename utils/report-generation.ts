@@ -327,7 +327,7 @@ export async function sendEmail(user: User, report: Report) {
       subject: report.title,
       html: htmlContent
     });
-  } catch (error) {
+  } catch (error: any) {
     throw new Error(`Email sending failed: ${error.message}`);
   }
 }
