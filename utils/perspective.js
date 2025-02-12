@@ -3,7 +3,7 @@ import { google } from 'googleapis';
 
 const DISCOVERY_URL = 'https://commentanalyzer.googleapis.com/$discovery/rest?version=v1alpha1';
 
-export async function analyzeToxicity(text: string) {
+export async function analyzeToxicity(text) {
   try {
     const client = await google.discoverAPI(DISCOVERY_URL);
     
@@ -24,6 +24,10 @@ export async function analyzeToxicity(text: string) {
     const response = await client.comments.analyze({
       key: process.env.GOOGLE_API_KEY,
       requestBody: analyzeRequest,
+    }, 
+    (err, response) => {
+      if (err) throw err;
+      console.log(JSON.stringify(response.data, null, 2));
     });
 
     if (!response.data.attributeScores) {
