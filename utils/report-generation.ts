@@ -22,18 +22,6 @@ const emailConfig = {
   }
 };
 
-// Types
-interface User {
-  id: string;
-  email: string | undefined;
-}
-
-interface Report {
-  title: string;
-  content: string;
-  image_url?: string | null;
-}
-
 interface ReportContent {
   reportText: string;
   imagePrompt: string;
