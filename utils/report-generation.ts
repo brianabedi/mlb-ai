@@ -24,7 +24,7 @@ const emailConfig = {
 // Types
 interface User {
   id: string;
-  email: string;
+  email: string | undefined;
 }
 
 interface Report {

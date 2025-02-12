@@ -23,14 +23,21 @@ export async function GET(request: Request) {
     const { data: { users }, error: userError } = await supabase.auth.admin.listUsers();
     if (userError) throw new Error(`Failed to fetch users: ${userError.message}`);
 
+    const validUsers = users.filter(user => user.email);
+
     const reports = await Promise.all(
-      users.map(user => generateUserReport(user, supabase))
+      validUsers.map(user => generateUserReport(
+        { id: user.id, email: user.email! },
+        supabase
+      ))
     );
+
 
     return NextResponse.json({
       success: true,
       reportsGenerated: reports.filter(Boolean).length,
-      totalUsers: users.length
+      totalUsers: validUsers.length,
+      skippedUsers: users.length - validUsers.length
     });
   } catch (error) {
     console.error('Cron job failed:', error);
