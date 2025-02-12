@@ -26,22 +26,48 @@ export default function Social() {
   const [newMessage, setNewMessage] = useState("")
   const [onlineUsers, setOnlineUsers] = useState(0)
   const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [isInitialAuthChecking, setIsInitialAuthChecking] = useState(true)
+  const chatContainerRef = useRef<HTMLDivElement>(null)
   const [error, setError] = useState<string | null>(null);
   const supabase = createClient()
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
+    }
   }
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages])
 
+  useEffect(() => {
+    const checkAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        setIsLoggedIn(!!session)
+      } finally {
+        setIsInitialAuthChecking(false)
+      }
+    }
+    checkAuth()
+  }, [])
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsLoggedIn(!!session)
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
+  }, [])
   useEffect(() => {
     // Fetch initial messages
     const fetchMessages = async () => {
       const response = await fetch('/api/messages')
       const data = await response.json()
       setMessages(data)
-      scrollToBottom()
-    }
+     }
 
     // Subscribe to new messages
     const channel = supabase
@@ -62,16 +88,10 @@ export default function Social() {
             }
             return prev
           })
-          scrollToBottom()
-        }
+         }
       )
 
-    // Start subscription
-    channel.subscribe((status) => {
-      if (status === 'SUBSCRIBED') {
-        console.log('Successfully subscribed to real-time messages')
-      }
-    })
+  
  // Handle presence for online users
  const presenceChannel = supabase.channel('online-users', {
   config: {
@@ -102,6 +122,7 @@ presenceChannel
       console.log('Presence tracking status:', status)
     }
   })
+channel.subscribe()
 
 fetchMessages()
 
@@ -110,7 +131,7 @@ return () => {
   presenceChannel.unsubscribe()
 }
 }, [])
-
+  
 const sendMessage = async (e: React.FormEvent) => {
   e.preventDefault()
   if (!newMessage.trim() || isLoading) return
@@ -173,7 +194,8 @@ const sendMessage = async (e: React.FormEvent) => {
       <CardContent>
         <div className="mb-4">
           <h3 className="text-lg font-semibold mb-2">Live Chat</h3>
-          <div className="h-[300px] overflow-y-auto space-y-4 mb-4 p-4 border rounded-lg">
+          <div           ref={chatContainerRef}
+className="h-[300px] overflow-y-auto space-y-4 mb-4 p-4 border rounded-lg">
             {messages.map((message) => (
               <div key={message.id} className="break-words">
                 <div className="bg-gray-100 p-2 rounded-lg">
@@ -184,29 +206,32 @@ const sendMessage = async (e: React.FormEvent) => {
                 </div>
               </div>
             ))}
-            <div ref={messagesEndRef} />
           </div>
         </div>
       </CardContent>
       <CardFooter>
-      {error && (
+      {/* {!isLoggedIn && (
+          <div className="w-full p-3 text-sm text-gray-600 bg-gray-100 rounded-md text-center">
+            Please log in to participate in the chat
+          </div>
+        )} */}
+        {error && (
           <div className="w-full p-3 text-sm text-red-600 bg-red-100 rounded-md">
             {error}
           </div>
         )}
         <form onSubmit={sendMessage} className="flex w-full gap-2">
-        <Input
+          <Input
             value={newMessage}
             onChange={(e) => {
-              setNewMessage(e.target.value);
-              setError(null);
+              setNewMessage(e.target.value)
+              setError(null)
             }}
-            placeholder="Type your message..."
+            placeholder={isLoggedIn ? "Type your message..." : "Login to chat"}
             className="flex-1"
-            disabled={isLoading}
-
+            disabled={isLoading || !isLoggedIn}
           />
-           <Button type="submit" disabled={isLoading}>
+          <Button type="submit" disabled={isLoading || !isLoggedIn}>
             {isLoading ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
