@@ -1,7 +1,6 @@
 // app/api/game_predictions/route.ts
 import { NextResponse, NextRequest } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { createClient } from '@supabase/supabase-js'
 
 // Initialize Gemini
@@ -12,13 +11,8 @@ const RETRY_AFTER = 60 * 1000; // 1 minute
 let lastApiCall = 0;
 
 const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
- 
 const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
 
-const limiter = new RateLimiterMemory({
-  points: 10, 
-  duration: 60,
-});
 
 const MLB_TEAMS: { [key: number]: string } = {
   108: 'Los Angeles Angels',
@@ -259,8 +253,6 @@ export async function GET(req: NextRequest) {
   console.log('Starting GET request');
 
   try {
-    const ip = req.headers.get('x-forwarded-for') || '';
-    await limiter.consume(ip);
 
     const supabase = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
