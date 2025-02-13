@@ -1,6 +1,6 @@
 // Reports.tsx
 "use client"
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Card,
   CardContent,
@@ -45,14 +45,17 @@ export default function Reports() {
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [isInitialAuthChecking, setIsInitialAuthChecking] = useState(true);
   const [supabase] = useState(() => createClient());
   const { toast } = useToast();
 
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
         setError('Please login to view reports');
+        setReports([]);
         return;
       }
 
@@ -65,16 +68,47 @@ export default function Reports() {
       }));
       
       setReports(cleanedReports);
+      setError(null);
+
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load reports');
+      setReports([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [supabase]);
 
   useEffect(() => {
-    fetchReports();
-  }, [supabase]);
+    const checkInitialAuth = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        setIsLoggedIn(!!session);
+        if (session) {
+          await fetchReports();
+        }
+      } finally {
+        setIsInitialAuthChecking(false);
+      }
+    };
+
+    checkInitialAuth();
+  }, [fetchReports]);
+
+   useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setIsLoggedIn(!!session);
+      if (session) {
+        fetchReports();
+      } else {
+        setReports([]);
+        setError('Please login to view reports');
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [fetchReports]);
 
   const handleGenerateReport = async () => {
     setGenerating(true);
@@ -115,6 +149,38 @@ export default function Reports() {
     }
   };
 
+  if (isInitialAuthChecking) {
+    return (
+      <Card className="w-full mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-6 w-6" />
+            AI Reports
+          </CardTitle>
+          <CardDescription>Daily and on-demand performance reports</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-32">
+          <p className="text-muted-foreground">Checking authentication...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+  if (!isLoggedIn) {
+    return (
+      <Card className="w-full mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-6 w-6" />
+            AI Reports
+          </CardTitle>
+          <CardDescription>Daily and on-demand performance reports</CardDescription>
+        </CardHeader>
+        <CardContent className="flex items-center justify-center h-32">
+          <p className="text-muted-foreground">Please login to view reports</p>
+        </CardContent>
+      </Card>
+    );
+  }
   if (!loading && error) {
     return (
       <Card className="w-full mt-4">
@@ -131,7 +197,6 @@ export default function Reports() {
       </Card>
     );
   }
-
   const EmptyState = () => (
     <div className="flex flex-col items-center justify-center space-y-4 py-8">
       <Clock className="h-12 w-12 text-muted-foreground" />
