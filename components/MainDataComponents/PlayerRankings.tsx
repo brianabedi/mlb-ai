@@ -379,7 +379,7 @@ export default function PlayerRankings() {
                           alt={player.nameFirstLast} 
                         />
                         <AvatarFallback>
-                          {player.nameFirstLast.split(' ').map(n => n[0]).join('')}
+                          {player.nameFirstLast.split(' ').map((n: any[]) => n[0]).join('')}
                         </AvatarFallback>
                       </Avatar>
                       {player.nameFirstLast}
