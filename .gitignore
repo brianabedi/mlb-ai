@@ -12,7 +12,7 @@
 
 # testing
 /coverage
-
+package-lock.json
 # next.js
 /.next/
 /out/
