@@ -230,7 +230,7 @@ export default function Reports() {
                     <TableHead>Date</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Title</TableHead>
-                    <TableHead>Image</TableHead>
+                    {/* <TableHead>Image</TableHead> */}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -245,11 +245,11 @@ export default function Reports() {
                       </TableCell>
                       <TableCell className="capitalize">{report.type}</TableCell>
                       <TableCell>{report.title}</TableCell>
-                      <TableCell>
+                      {/* <TableCell>
                         {report.image_url ? (
                           <ImageIcon className="h-4 w-4 text-muted-foreground" />
                         ) : null}
-                      </TableCell>
+                      </TableCell> */}
                     </TableRow>
                   ))}
                 </TableBody>

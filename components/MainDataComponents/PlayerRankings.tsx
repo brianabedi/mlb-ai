@@ -1,6 +1,8 @@
 // app/components/MainDatComponenets/PlayerRankings.tsx
 "use client"
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import useSWR from 'swr'
+
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -72,62 +74,58 @@ interface Player {
   followers: number
 }
 
+const fetcher = async (url: string) => {
+  const res = await fetch(url, {
+    headers: {
+      'Cache-Control': 'no-cache',
+      'Pragma': 'no-cache'
+    }
+  })
+  if (!res.ok) throw new Error('Failed to fetch data')
+  return res.json()
+}
+ 
 export default function PlayerRankings() {
-  const [players, setPlayers] = useState<Player[]>([])
+  // const [players, setPlayers] = useState<Player[]>([])
   const [activeTab, setActiveTab] = useState('batting')
   const [sortBy, setSortBy] = useState<string>('homeRuns')
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  // const [error, setError] = useState<string | null>(null)
   const [followedPlayers, setFollowedPlayers] = useState<number[]>([])
   const [supabase] = useState(() => createClient())
   const [showLoginDialog, setShowLoginDialog] = useState(false)
-  const [isAuthChecking, setIsAuthChecking] = useState(true)
+  // const [isAuthChecking, setIsAuthChecking] = useState(true)
 
-  const fetchPlayers = useCallback(async () => {
-    try {
-      const response = await fetch('/api/players');
-      if (!response.ok) {
-        throw new Error('Failed to fetch player data');
-      }
-      const data = await response.json();
-      setPlayers(data);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
+  const { data: players, error, isLoading } = useSWR('/api/players', fetcher, {
+    revalidateOnFocus: false, // Don't revalidate when window regains focus
+    revalidateOnReconnect: false, // Don't revalidate on reconnection
+    refreshInterval: 300000, // Refresh every 5 minutes
+    dedupingInterval: 10000, // Dedupe requests within 10 seconds
+  })
+
+   
   const fetchFollowedPlayers = useCallback(async () => {
     try {
-      setIsAuthChecking(true);
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await supabase.auth.getSession()
       
       if (session?.user) {
         const { data: follows, error: dbError } = await supabase
           .from('player_follows')
           .select('player_id')
-          .eq('user_id', session.user.id);
+          .eq('user_id', session.user.id)
         
-        if (dbError) throw dbError;
-        if (follows) {
-          setFollowedPlayers(follows.map(f => f.player_id));
-        }
+        if (dbError) throw dbError
+        setFollowedPlayers(follows?.map(f => f.player_id) || [])
       } else {
-        setFollowedPlayers([]);
+        setFollowedPlayers([])
       }
     } catch (err) {
-      console.error('Error fetching followed players:', err);
-      setFollowedPlayers([]);
-    } finally {
-      setIsAuthChecking(false);
+      console.error('Error fetching followed players:', err)
+      setFollowedPlayers([])
     }
-  }, [supabase]);
-
-  useEffect(() => {
-    fetchPlayers();
-  }, [fetchPlayers]);
+  }, [supabase])
+ 
 
   useEffect(() => {
     const {
@@ -148,16 +146,12 @@ export default function PlayerRankings() {
   }, [supabase, fetchFollowedPlayers]);
 
   useEffect(() => {
-    const unsubscribe = FollowEventManager.subscribe(() => {
-      fetchFollowedPlayers();
-    });
-  
-    return () => {
-      unsubscribe();
-    };
+    const unsubscribe = FollowEventManager.subscribe(fetchFollowedPlayers)  
+    return () => unsubscribe()
+
   }, [fetchFollowedPlayers]);
   
-  const handleFollowToggle = async (playerId: number) => {
+  const handleFollowToggle = useCallback(async (playerId: number) => {
     try {
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user) {
@@ -166,8 +160,7 @@ export default function PlayerRankings() {
       }
 
       if (followedPlayers.includes(playerId)) {
-        // Optimistically update UI
-        setFollowedPlayers(followedPlayers.filter(id => id !== playerId));
+        setFollowedPlayers(prev => prev.filter(id => id !== playerId));
         
         const { error } = await supabase
           .from('player_follows')
@@ -176,15 +169,10 @@ export default function PlayerRankings() {
           .eq('player_id', playerId);
 
         if (error) {
-          // Revert on error
           setFollowedPlayers(prev => [...prev, playerId]);
           throw error;
         }
-        
-        // Notify other components about the change
-        FollowEventManager.notify();
       } else {
-        // Optimistically update UI
         setFollowedPlayers(prev => [...prev, playerId]);
         
         const { error } = await supabase
@@ -195,39 +183,39 @@ export default function PlayerRankings() {
           .select();
 
         if (error) {
-          // Revert on error
           setFollowedPlayers(prev => prev.filter(id => id !== playerId));
           throw error;
         }
-        
-        // Notify other components about the change
-        FollowEventManager.notify();
       }
+      
+      FollowEventManager.notify();
     } catch (err) {
       console.error('Error toggling player follow:', err);
     }
-  };
+  }, [followedPlayers, supabase]);
 
-  const sortedPlayers = [...players].sort((a, b) => {
-    switch (sortBy) {
-      case 'followers':
-        return b.followers - a.followers;
-      case 'homeRuns':
-        return (b.battingStats?.homeRuns ?? 0) - (a.battingStats?.homeRuns ?? 0);
-      case 'battingAverage':
-        return parseFloat(b.battingStats?.battingAverage ?? '0') - parseFloat(a.battingStats?.battingAverage ?? '0');
-      case 'era':
-        return parseFloat(a.pitchingStats?.earnedRunAverage ?? '999') - parseFloat(b.pitchingStats?.earnedRunAverage ?? '999');
-      case 'strikeouts':
-        return (b.pitchingStats?.strikeouts ?? 0) - (a.pitchingStats?.strikeouts ?? 0);
-      case 'wins':
-        return (b.pitchingStats?.wins ?? 0) - (a.pitchingStats?.wins ?? 0);
-      default:
-        return 0;
-    }
-  });
+  const sortedPlayers = useMemo(() => {
+    if (!players) return []
+    
+    return [...players].sort((a, b) => {
+      switch (sortBy) {
+        case 'homeRuns':
+          return (b.battingStats?.homeRuns ?? 0) - (a.battingStats?.homeRuns ?? 0)
+        case 'battingAverage':
+          return parseFloat(b.battingStats?.battingAverage ?? '0') - parseFloat(a.battingStats?.battingAverage ?? '0')
+        case 'era':
+          return parseFloat(a.pitchingStats?.earnedRunAverage ?? '999') - parseFloat(b.pitchingStats?.earnedRunAverage ?? '999')
+        case 'strikeouts':
+          return (b.pitchingStats?.strikeouts ?? 0) - (a.pitchingStats?.strikeouts ?? 0)
+        case 'wins':
+          return (b.pitchingStats?.wins ?? 0) - (a.pitchingStats?.wins ?? 0)
+        default:
+          return 0
+      }
+    })
+  }, [players, sortBy])
 
-  if (loading) {
+  if (isLoading) {
     return (
       <Card className="w-full mt-4">
         <CardContent className="pt-6">
@@ -343,7 +331,7 @@ export default function PlayerRankings() {
           </TabsContent>
         </Tabs>
         
-        {loading ? (
+        {isLoading ? (
           <div className="text-center py-8">Loading player data...</div>
         ) : error ? (
           <div className="text-center py-8 text-red-500">{error}</div>

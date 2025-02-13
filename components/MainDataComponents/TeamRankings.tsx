@@ -1,6 +1,6 @@
 "use client"
 import React, { useEffect, useState, useCallback } from 'react';
-import { Plus, Minus, Check } from "lucide-react";
+import { Plus, Minus, Trophy } from "lucide-react";
 import {
   Card,
   CardContent,
@@ -256,7 +256,10 @@ export default function TeamRankings() {
 
     <Card className="w-full mt-4">
       <CardHeader>
-        <CardTitle>Team Rankings</CardTitle>
+      <CardTitle className="flex items-center gap-2">
+          <Trophy className="h-6 w-6" />
+          Team Rankings
+        </CardTitle>
         <CardDescription>Current MLB team standings and statistics</CardDescription>
       </CardHeader>
       <CardContent>

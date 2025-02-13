@@ -368,7 +368,7 @@ export async function GET(req: NextRequest) {
     // Combine existing and new predictions
     const allPredictions = validGames.map(game => {
       const existingPrediction = predictionMap.get(game.gamePk);
-      const newPrediction = newPredictions.find(p => String(p.gamePk) === String(game.gamePk));
+      const newPrediction = newPredictions.find((p: { gamePk: any; }) => String(p.gamePk) === String(game.gamePk));
       
       const predictionToUse = existingPrediction || newPrediction;
 
