@@ -212,7 +212,9 @@ async function fetchAndProcessPlayers() {
 
   // Apply follower counts
   processedPlayers.forEach(player => {
-    player.followers = followerCounts.get(player.id) || 0;
+    if (player) {
+      player.followers = followerCounts.get(player.id) || 0;
+    }
   });
 
   return processedPlayers;
