@@ -1,7 +1,8 @@
 // components/GamePredictions.tsx
 "use client"
-import React, { useState, useEffect } from "react";
-import { Check } from "lucide-react";
+import React, { useState } from "react";
+import useSWR from "swr";
+import { Check, TrendingUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -24,8 +25,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { TrendingUpDown } from "lucide-react";
+} from "@/components/ui/select";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 interface Prediction {
   gamePk: string;
@@ -41,108 +42,97 @@ interface Prediction {
   predictedWinner: number;
 }
 
-export default function GamePredictions() {
-  const [predictions, setPredictions] = useState<Prediction[]>([]);
-  const [selectedDate, setSelectedDate] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [uniqueDates, setUniqueDates] = useState<string[]>([]);
-
-  const fetchPredictions = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const response = await fetch('/api/game_predictions');
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to fetch predictions');
-      }
-      const data = await response.json();
-      
-      // Validate the received data
-      if (!Array.isArray(data)) {
-        throw new Error('Invalid response format: expected an array');
-      }
-      if (data.length === 0) {
-        setError('No upcoming games found. Check back later for new predictions.');
-        setPredictions([]);
-        setUniqueDates([]);
-        return;
-      }
-      const validPredictions = data.filter(prediction => {
-        return (
-          prediction.gamePk &&
-          prediction.gameDate &&
-          prediction.homeTeam?.id &&
-          prediction.homeTeam?.name &&
-          prediction.awayTeam?.id &&
-          prediction.awayTeam?.name &&
-          typeof prediction.predictedWinner === 'number'
-        );
-      });
-
-      if (validPredictions.length === 0) {
-        throw new Error('No valid predictions found in the response');
-      }
-      // Extract unique dates and sort them
-      const dates = [...new Set(validPredictions.map(game => game.gameDate))].sort();
-      setUniqueDates(dates);
-      
-      // Set the first date as selected by default if none is selected
-      if (!selectedDate || !dates.includes(selectedDate)) {
-        setSelectedDate(dates[0]);
-      }
-      
-      setPredictions(validPredictions);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred while fetching predictions');
-      console.error('Prediction error:', err);
-      setPredictions([]);
-      setUniqueDates([]);
-    } finally {
-      setLoading(false);
+const fetcher = async (url: string) => {
+  const res = await fetch(url);
+  if (!res.ok) {
+    if (res.status === 429) {
+      throw new Error('Please wait before refreshing again. The prediction service is rate-limited to prevent overuse.');
     }
-  };
+    throw new Error('Failed to fetch predictions');
+  }
+  const data = await res.json();
+  
+  // Validate the received data
+  if (!Array.isArray(data)) {
+    throw new Error('Invalid response format: expected an array');
+  }
+  
+  return data;
+};
 
-  useEffect(() => {
-    fetchPredictions();
-  }, []);
+export default function GamePredictions() {
+  const [selectedDate, setSelectedDate] = useState<string>("");
+  
+  const { data: predictions, error, isLoading, mutate } = useSWR<Prediction[]>(
+    '/api/game_predictions',
+    fetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      refreshInterval: 5 * 60 * 1000, // Refresh every 5 minutes
+      dedupingInterval: 60 * 1000, // Dedupe requests within 1 minute
+      onSuccess: (data) => {
+        // Set initial selected date if not set
+        if (!selectedDate && data && data.length > 0) {
+          const dates = [...new Set(data.map(game => game.gameDate))].sort();
+          setSelectedDate(dates[0]);
+        }
+      }
+    }
+  );
 
-  const filteredPredictions = selectedDate
-    ? predictions.filter(pred => pred.gameDate === selectedDate)
-    : predictions;
+  // Get unique dates from predictions
+  const uniqueDates = React.useMemo(() => {
+    if (!predictions) return [];
+    return [...new Set(predictions.map(game => game.gameDate))].sort();
+  }, [predictions]);
 
-  if (loading) {
+  // Filter predictions by selected date
+  const filteredPredictions = React.useMemo(() => {
+    if (!predictions) return [];
+    return selectedDate
+      ? predictions.filter(pred => pred.gameDate === selectedDate)
+      : predictions;
+  }, [predictions, selectedDate]);
+
+  if (isLoading) {
     return (
-      <Card className="w-full  ">
-            <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-           <TrendingUpDown className="h-6 w-6" />
-AI Game Predictions</CardTitle>
-        <CardDescription>AI powered predictions for upcoming games</CardDescription>
-      </CardHeader>
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUpDown className="h-6 w-6" />
+            AI Game Predictions
+          </CardTitle>
+          <CardDescription>AI powered predictions for upcoming games</CardDescription>
+        </CardHeader>
         <CardContent className="flex items-center justify-center">
           <div className="w-8 h-8 border-t-2 border-b-2 border-blue-500 rounded-full animate-spin"></div>
         </CardContent>
-
       </Card>
     );
   }
+
   if (error) {
     return (
       <Card className="w-full">
-             <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-           <TrendingUpDown className="h-6 w-6" />
-AI Game Predictions</CardTitle>
-        <CardDescription>AI powered predictions for upcoming games</CardDescription>
-      </CardHeader>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUpDown className="h-6 w-6" />
+            AI Game Predictions
+          </CardTitle>
+          <CardDescription>AI powered predictions for upcoming games</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert variant="destructive">
+            <AlertDescription>{error.message}</AlertDescription>
+          </Alert>
+        </CardContent>
         <CardFooter>
           <Button 
             variant="outline" 
             className="w-full" 
-            onClick={fetchPredictions}
-            disabled={loading}
+            onClick={() => mutate()}
+            disabled={isLoading}
           >
             Try Again
           </Button>
@@ -151,21 +141,27 @@ AI Game Predictions</CardTitle>
     );
   }
 
-  if (predictions.length === 0) {
+  if (!predictions || predictions.length === 0) {
     return (
       <Card className="w-full">
-           <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-           <TrendingUpDown className="h-6 w-6" />
-AI Game Predictions</CardTitle>
-        <CardDescription>AI powered predictions for upcoming games</CardDescription>
-      </CardHeader>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <TrendingUpDown className="h-6 w-6" />
+            AI Game Predictions
+          </CardTitle>
+          <CardDescription>AI powered predictions for upcoming games</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Alert>
+            <AlertDescription>No upcoming games found. Check back later for new predictions.</AlertDescription>
+          </Alert>
+        </CardContent>
         <CardFooter>
           <Button 
             variant="outline" 
             className="w-full" 
-            onClick={fetchPredictions}
-            disabled={loading}
+            onClick={() => mutate()}
+            disabled={isLoading}
           >
             Refresh
           </Button>
@@ -177,9 +173,10 @@ AI Game Predictions</CardTitle>
   return (
     <Card className="w-full">
       <CardHeader>
-      <CardTitle className="flex items-center gap-2">
-           <TrendingUpDown className="h-6 w-6" />
-AI Game Predictions</CardTitle>
+        <CardTitle className="flex items-center gap-2">
+          <TrendingUpDown className="h-6 w-6" />
+          AI Game Predictions
+        </CardTitle>
         <CardDescription>AI powered predictions for upcoming games</CardDescription>
       </CardHeader>
       <CardContent>
@@ -209,12 +206,12 @@ AI Game Predictions</CardTitle>
           opts={{
             align: "start",
           }}
-          className="w-full px-8 "
+          className="w-full px-8"
         >
           <CarouselContent>
             {filteredPredictions.map((prediction, index) => (
               <CarouselItem key={index} className="md:basis-1/2">
-                <div className=" ">
+                <div>
                   <Card>
                     <CardContent className="flex items-center justify-between p-4">
                       <div className="flex flex-col items-center space-y-2">
@@ -256,16 +253,6 @@ AI Game Predictions</CardTitle>
           <CarouselNext className="mr-6" />
         </Carousel>
       </CardContent>
-      {/* <CardFooter className="flex justify-between">
-        <Button 
-          variant="outline" 
-          className="w-100 m-auto" 
-          onClick={fetchPredictions}
-          disabled={loading}
-        >
-          Refresh Predictions
-        </Button>
-      </CardFooter> */}
     </Card>
   );
 }

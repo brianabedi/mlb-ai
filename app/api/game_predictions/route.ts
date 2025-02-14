@@ -3,14 +3,32 @@ import { NextResponse, NextRequest } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 
+
+const logger = {
+  info: (message: string, meta?: any) => {
+    console.log(`[INFO] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  },
+  error: (message: string, error: any, meta?: any) => {
+    console.error(`[ERROR] ${message}:`, error, meta ? JSON.stringify(meta, null, 2) : '');
+  },
+  warn: (message: string, meta?: any) => {
+    console.warn(`[WARN] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  },
+  debug: (message: string, meta?: any) => {
+    console.debug(`[DEBUG] ${message}`, meta ? JSON.stringify(meta, null, 2) : '');
+  }
+};
+
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 // Initialize Gemini
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
-const RETRY_AFTER = 60 * 1000; // 1 minute
-let lastApiCall = 0;
-
-const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
-const teamStatsCache = new Map<number, { timestamp: number; stats: any[] }>();
+// const RETRY_AFTER = 60 * 1000; // 60 seconds
+const TEAM_STATS_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours 
 
 const MLB_TEAMS: { [key: number]: string } = {
   108: 'Los Angeles Angels',
@@ -44,7 +62,6 @@ const MLB_TEAMS: { [key: number]: string } = {
   147: 'New York Yankees',
   158: 'Milwaukee Brewers'
 };
-
 interface GamePrediction {
   game_pk: string;
   game_date: string;
@@ -55,13 +72,41 @@ interface GamePrediction {
   home_team_stats?: any;
   away_team_stats?: any;
 }
-function fetchTeamName(teamId: number): string {
-  return MLB_TEAMS[teamId] || `Team ${teamId}`;
-}
+// async function checkRateLimit() {
+//   const now = Date.now();
+//   logger.debug('Checking rate limit');
+//   try {
+//     // Use Supabase as a rate limit store
+//     const { data: rateLimitData, error } = await supabase
+//       .from('rate_limits')
+//       .select('last_call')
+//       .single();
+
+//     if (error && error.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+//       logger.error('Rate limit check failed', error);
+
+//       throw error;
+//     }
+
+//     if (rateLimitData && now - new Date(rateLimitData.last_call).getTime() < RETRY_AFTER) {
+//       const waitTime = Math.ceil((RETRY_AFTER - (now - new Date(rateLimitData.last_call).getTime())) / 1000);
+//       logger.warn(`Rate limit in effect`, { waitTime });
+//       throw new Error(`Rate limit exceeded. Please wait ${waitTime} seconds.`);  }
+
+//     // Update last call time
+//     await supabase
+//       .from('rate_limits')
+//       .upsert({ id: 1, last_call: new Date().toISOString() });
+//   } catch (error) {
+//     logger.error('Rate limit check error', error);
+//     throw error;
+//   }
+// }
 
 const fetchWithTimeout = async (url: string, timeout = 5000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeout);
+  logger.debug('Fetching URL with timeout', { url, timeout });
 
   try {
     const response = await fetch(url, {
@@ -73,14 +118,67 @@ const fetchWithTimeout = async (url: string, timeout = 5000) => {
     });
     
     if (!response.ok) {
+      logger.error('HTTP error in fetchWithTimeout', { status: response.status, url });
+
       throw new Error(`HTTP error! status: ${response.status}`);
     }
-    
+    logger.debug('Successfully fetched URL', { url });
+
     return response;
-  } finally {
+  }catch (error) {
+    logger.error('Error in fetchWithTimeout', error, { url });
+    throw error;
+  }  finally {
     clearTimeout(timeoutId);
   }
 };
+
+async function getTeamStats(teamId: number) {
+  logger.debug('Fetching team stats', { teamId });
+
+  try {
+    const { data: cachedStats, error: cacheError } = await supabase
+      .from('team_stats_cache')
+      .select('stats, timestamp')
+      .eq('team_id', teamId)
+      .single();
+
+    if (!cacheError && cachedStats && 
+        Date.now() - new Date(cachedStats.timestamp).getTime() < TEAM_STATS_CACHE_DURATION) {
+      logger.debug('Using cached team stats', { teamId });
+      return cachedStats.stats;
+    }
+
+    const response = await fetchWithTimeout(
+      `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&group=pitching,hitting`
+    );
+    const data = await response.json();
+    
+    logger.debug('Updating team stats cache', { teamId });
+    await supabase
+      .from('team_stats_cache')
+      .upsert({
+        team_id: teamId,
+        stats: data.stats,
+        timestamp: new Date().toISOString()
+      });
+    
+    return data.stats;
+  } catch (error) {
+    logger.warn(`Could not fetch stats for team ${teamId}, using default stats`, { error });
+    return [
+      {
+        type: { displayName: "pitching" },
+        splits: [{ stat: {} }]
+      },
+      {
+        type: { displayName: "hitting" },
+        splits: [{ stat: {} }]
+      }
+    ];
+  }
+}
+
 
 async function fetchGamesForDateRange(startDate: string, days: number = 3) {
   const games = [];
@@ -118,42 +216,9 @@ async function fetchGamesForDateRange(startDate: string, days: number = 3) {
   return results.flat();
 }
 
-async function fetchTeamStats(teamId: number) {
-  if (teamStatsCache.has(teamId) && 
-      Date.now() - teamStatsCache.get(teamId)!.timestamp < TEAM_STATS_CACHE_DURATION) {
-    return teamStatsCache.get(teamId)!.stats;
-  }
-
-  try {
-    const response = await fetchWithTimeout(
-      `https://statsapi.mlb.com/api/v1/teams/${teamId}/stats?stats=season&group=pitching,hitting`
-    );
-    const data = await response.json();
-    teamStatsCache.set(teamId, { timestamp: Date.now(), stats: data.stats });
-    return data.stats;
-  } catch (error) {
-    console.warn(`Could not fetch stats for team ${teamId}, using default stats`);
-    return [
-      {
-        type: { displayName: "pitching" },
-        splits: [{ stat: {} }]
-      },
-      {
-        type: { displayName: "hitting" },
-        splits: [{ stat: {} }]
-      }
-    ];
-  }
-}
-
 async function generatePredictions(gamesWithStats: any[]) {
-  const now = Date.now();
-  
-  if (now - lastApiCall < RETRY_AFTER) {
-    throw new Error(`Please wait ${Math.ceil((RETRY_AFTER - (now - lastApiCall)) / 1000)} seconds before requesting new predictions`);
-  }
-  
-  lastApiCall = now;
+  logger.info('Generating predictions', { gameCount: gamesWithStats.length });
+  // await checkRateLimit();
 
   const model = genAI.getGenerativeModel({ model: "gemini-pro" });
   const prompt = `You are a baseball analytics expert. Analyze these MLB games and predict the winners. 
@@ -167,42 +232,48 @@ IMPORTANT: Respond ONLY with a JSON array in the following exact format, with no
     "gamePk": "game_pk_here",
     "predictedWinner": team_id_here
   }
-]
-
-Base your predictions on the team stats provided. Your response must be valid JSON that can be parsed with JSON.parse().`;
+]`;
 
   let retryCount = 0;
   const MAX_RETRIES = 3;
 
   while (retryCount < MAX_RETRIES) {
     try {
+      logger.debug('Attempting to generate prediction', { attempt: retryCount + 1 });
       const result = await model.generateContent(prompt);
       const response = await result.response;
+      logger.info('Successfully generated predictions');
       return response.text();
     } catch (error: any) {
       if (error.status === 429) {
         const waitTime = (2 ** retryCount) * 1000;
-        console.log(`Rate limit hit. Retrying in ${waitTime / 1000} seconds.`);
+        logger.warn('Rate limit hit, retrying', { retryCount, waitTime });
         await new Promise(resolve => setTimeout(resolve, waitTime));
         retryCount++;
       } else {
+        logger.error('Error generating predictions', error);
         throw error;
       }
     }
   }
 
+  // logger.error('Rate limit reached after multiple retries');
   throw new Error('Rate limit reached after multiple retries.');
 }
 
 async function storePredictions(supabase: any, predictions: any[], gamesWithStats: any[]) {
+  logger.info('Storing predictions', { 
+    predictionCount: predictions.length,
+    gameCount: gamesWithStats.length 
+  });
+
   const predictionsToInsert = predictions.map(prediction => {
     const gameInfo = gamesWithStats.find(game => String(game.gamePk) === String(prediction.gamePk));
     if (!gameInfo) {
-      console.error(`No matching game found for prediction: ${JSON.stringify(prediction)}`);
+      logger.error('No matching game found for prediction', { prediction });
       throw new Error(`No matching game found for gamePk: ${prediction.gamePk}`);
     }
 
-    // Set expiration to 24 hours after the game date
     const gameDate = new Date(gameInfo.gameDate);
     const expiresAt = new Date(gameDate);
     expiresAt.setHours(expiresAt.getHours() + 24);
@@ -221,67 +292,121 @@ async function storePredictions(supabase: any, predictions: any[], gamesWithStat
     };
   });
 
-  const { error } = await supabase
-    .from('game_predictions')
-    .insert(predictionsToInsert);
+  try {
+    const { error } = await supabase
+      .from('game_predictions')
+      .insert(predictionsToInsert);
 
-  if (error) {
-    console.error('Error storing predictions in Supabase:', error);
+    if (error) {
+      logger.error('Error storing predictions in Supabase', error);
+      throw error;
+    }
+    
+    logger.info('Successfully stored predictions', { count: predictionsToInsert.length });
+  } catch (error) {
+    logger.error('Failed to store predictions', error);
     throw error;
   }
 }
 
 export async function GET(req: NextRequest) {
-  console.log('Starting GET request');
+  const requestId = Math.random().toString(36).substring(7);
+  logger.info('Starting GET request', { requestId });
   const startTime = Date.now();
-
   try {
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
-    );
+    // First check Supabase for any upcoming games in the next 10 days
+    const currentDate = new Date();
+    const futureDate = new Date();
+    futureDate.setDate(currentDate.getDate() + 10);
+    
+    logger.debug('Checking Supabase for upcoming games', { 
+      requestId,
+      startDate: currentDate.toISOString(),
+      endDate: futureDate.toISOString()
+    });
 
-    // Find games for the next few days
-    console.log('Finding next date with games...');
+    const { data: existingGames, error: gamesError } = await supabase
+      .from('game_predictions')
+      .select('*')
+      .gte('game_date', currentDate.toISOString())
+      .lte('game_date', futureDate.toISOString())
+      .gt('expires_at', currentDate.toISOString())
+      .order('game_date', { ascending: true });
+
+    if (gamesError) {
+      logger.error('Error fetching games from Supabase:', { requestId, error: gamesError });
+      throw gamesError;
+    }
+
+    // If we found games in Supabase, use those instead of calling MLB API
+    if (existingGames && existingGames.length > 0) {
+      logger.info('Found existing games in Supabase', { 
+        requestId, 
+        gameCount: existingGames.length 
+      });
+      
+      const formattedPredictions = existingGames.map(game => ({
+        gamePk: game.game_pk,
+        gameDate: game.game_date,
+        homeTeam: {
+          id: game.home_team_id,
+          name: MLB_TEAMS[game.home_team_id]
+        },
+        awayTeam: {
+          id: game.away_team_id,
+          name: MLB_TEAMS[game.away_team_id]
+        },
+        predictedWinner: game.predicted_winner
+      }));
+
+      return NextResponse.json(formattedPredictions);
+    }
+
+    // If no games found in Supabase, proceed with MLB API calls
+    logger.debug('No games found in Supabase, checking MLB API', { requestId });
     let nextGameDate = new Date();
     let upcomingGames = [];
     
-    for (let i = 0; i <= 30; i++) {
+    for (let i = 0; i <= 10; i++) {
       const checkDate = new Date();
       checkDate.setDate(checkDate.getDate() + i);
+      const dateStr = checkDate.toISOString().split('T')[0];
+      logger.debug('Checking MLB API for date', { requestId, date: dateStr });
+
       const response = await fetchWithTimeout(
-        `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${
-          checkDate.toISOString().split('T')[0]
-        }`
+        `https://statsapi.mlb.com/api/v1/schedule?sportId=1&date=${dateStr}`
       );
       const data = await response.json();
       
       if (data.dates?.[0]?.games?.length > 0) {
         nextGameDate = checkDate;
-        // Fetch 3 days worth of games starting from this date
-        upcomingGames = await fetchGamesForDateRange(
-          checkDate.toISOString().split('T')[0],
-          3
-        );
+        logger.info('Found games in MLB API', { 
+          requestId, 
+          date: dateStr, 
+          gameCount: data.dates[0].games.length 
+        });
+        
+        upcomingGames = await fetchGamesForDateRange(dateStr, 3);
         break;
       }
     }
 
+    // Rest of the existing logic remains the same
     if (upcomingGames.length === 0) {
-      console.log('No upcoming games found');
+      logger.info('No upcoming games found', { requestId });
       return NextResponse.json([]);
     }
 
-    // Filter to valid MLB teams
     const validGames = upcomingGames.filter(game => 
       MLB_TEAMS[game.teams.home.team.id] && 
       MLB_TEAMS[game.teams.away.team.id]
     );
 
     if (validGames.length === 0) {
-      console.log('No valid games found after filtering');
+      logger.info('No valid games found after filtering', { requestId });
       return NextResponse.json([]);
     }
+
 
     // Get game IDs we need predictions for
     const requiredGameIds = validGames.map(game => game.gamePk);
@@ -338,8 +463,8 @@ export async function GET(req: NextRequest) {
     const gamesWithStats = await Promise.all(
       gamesNeedingPredictions.map(async (game) => {
         const [homeTeamStats, awayTeamStats] = await Promise.all([
-          fetchTeamStats(game.teams.home.team.id),
-          fetchTeamStats(game.teams.away.team.id)
+          getTeamStats(game.teams.home.team.id),
+          getTeamStats(game.teams.away.team.id)
         ]);
         
         return {
@@ -387,11 +512,15 @@ export async function GET(req: NextRequest) {
       };
     });
 
-    console.log(`Request completed in ${Date.now() - startTime}ms`);
+    logger.info(`Request completed`, { 
+      requestId,
+      duration: Date.now() - startTime,
+      gameCount: allPredictions.length
+    });
     return NextResponse.json(allPredictions);
 
   } catch (error: any) {
-    console.error('Error in game predictions:', error);
+    logger.error('Error in game predictions:', { requestId, error });
     
     if (error.message?.includes('Rate limit')) {
       return new NextResponse('Too Many Requests', { status: 429 });
